@@ -22,32 +22,45 @@ existing curated glossary.
 
 ## Detailed Requirements
 
-1. Behavior (in `glossaryDir` from context; create it if missing):
-   - `config.yaml`: write `defaultConfigYaml()`. If it exists: without
-     `--force` ⇒ `UsageError(E_ALREADY_INITIALIZED)` (add code) listing what
-     exists; with `--force` ⇒ overwrite config.yaml ONLY.
-   - `terms/`: create dir (+ `.gitkeep`) if missing. NEVER touched by --force.
+1. Behavior (in `glossaryDir` from context; create it if missing). The five
+   managed entries (repo-relative; `<dir>` = glossary dir name):
+   `<dir>/config.yaml`, `<dir>/terms/`, `<dir>/terms/.gitkeep`,
+   `<dir>/rejected.yaml`, `<dir>/.gitignore`.
+   - `config.yaml`: when missing, write `defaultConfigYaml(<dir>)` (05).
+     Existing file is left untouched and reported in `skipped` (idempotent
+     re-run, exit 0). With `--force` it is overwritten and reported in
+     `overwritten` — `--force` affects config.yaml ONLY.
+   - `terms/` + `.gitkeep`: create if missing; never touched by `--force`.
    - `rejected.yaml`: if missing, write `{schemaVersion: 1, rejected: []}`
-     with header `# Managed by 'glossary reject' — safe to review, edit via CLI`.
-     Existing file untouched even with `--force`.
-   - `.gitignore` (inside glossaryDir): if missing, write `site/\n`. Existing
-     untouched.
-2. Output (human): checklist of created/skipped paths, then next-steps hint
-   (`glossary extract`). `--json` data:
-   `{created: string[], skipped: string[]}` (repo-relative paths, sorted).
-3. `init` must not require config (needsConfig=false) and must not read
-   anything outside `glossaryDir`.
-4. Re-run without changes ⇒ exit 0, everything in `skipped`.
+     with header `Managed by 'glossary reject' — edit via CLI`. Existing file
+     untouched even with `--force`.
+   - `.gitignore`: if missing, write `site/\n`. Existing untouched.
+   - Symlink guard: `lstat` `glossaryDir` and each existing managed entry
+     before writing; any symlink ⇒ `UsageError(E_PATH_ESCAPE)` naming the
+     path (§13-B1 defense; realpath containment of the dir itself is already
+     enforced by 05's resolvePaths).
+2. Output (human): checklist of created/overwritten/skipped paths, then a
+   next-steps hint (`glossary extract`). `--json` data (the envelope `data`
+   field, issue 06): `{created: string[], overwritten: string[], skipped:
+   string[]}` — repo-relative paths, directories with trailing `/`, each
+   array sorted. Example full stdout:
+   `{"ok":true,"command":"init","data":{"created":["glossary/.gitignore","glossary/config.yaml","glossary/rejected.yaml","glossary/terms/","glossary/terms/.gitkeep"],"overwritten":[],"skipped":[]},"warnings":[]}`
+3. `init` must not require config (needsConfig=false). It performs no config
+   loading, no store reads, and no repository scanning — only issue 05/06
+   path resolution (repo-root discovery from cwd/`.git`) plus the
+   managed-entry checks above.
+4. Re-run without changes ⇒ exit 0, all five entries in `skipped`.
 5. If `glossaryDir` exists but is a file, or resolves outside repoRoot ⇒
    errors per issue 05's `resolvePaths` (already enforced; test it end-to-end).
 
 ## Acceptance Criteria
 
-- [ ] Fresh temp repo: `init` exits 0 and creates exactly the 4 paths; second run exits 0 with all-skipped; `--force` rewrites only config.yaml (mtimes/content of others unchanged).
-- [ ] Existing config without `--force` ⇒ exit 2, message names config.yaml and suggests `--force`.
+- [ ] Fresh temp repo: `init` exits 0; `created` equals exactly the five managed entries of Req 1; second run exits 0 with all five in `skipped` and zero filesystem writes (mtime/fs-spy check).
+- [ ] `--force`: `overwritten == ["glossary/config.yaml"]`; content and mtimes of the other four entries unchanged.
+- [ ] Symlinked `glossary/` dir or symlinked existing `config.yaml` ⇒ exit 2 `E_PATH_ESCAPE` naming the path, zero writes.
 - [ ] Written config.yaml round-trips through `loadConfig` equal to `DEFAULT_CONFIG`.
-- [ ] `--json` output matches the frozen shape (snapshot test via runCli).
-- [ ] `--dir docs/glossary` variant works and `.gitignore` content is `site/`.
+- [ ] `--json` output matches the frozen envelope example (snapshot via runCli).
+- [ ] `--dir docs/glossary`: entries created under `docs/glossary/`, generated config contains `site.outDir: docs/glossary/site`, `.gitignore` content is `site/`.
 
 ## Validation
 

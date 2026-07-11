@@ -7,8 +7,9 @@
 ## Summary
 
 Implement extractor E4 per DESIGN.md §9.4-E4: mine explicit definitions from
-structure facts (15) and JA/EN definition sentences, emitting candidates with
-`suggestedDefinition` (source `doc`).
+structure facts (15) and JA/EN definition sentences, emitting raws that carry
+`definition` + `definitionKind`; merge (23) converts the best one per key
+into `suggestedDefinition` with source `doc`.
 
 ## Context
 
@@ -23,22 +24,32 @@ is significant even at one occurrence (exempt from minOccurrences, §9.6).
 ## Detailed Requirements
 
 1. Signature:
-   `extractDocDefinitions(inputs: {blocks: PositionedText[], facts: StructureFact[]}): RawCandidateWithDef[]`
-   where RawCandidateWithDef = RawCandidate + `{definition: string}`
-   (kind `doc-defined`).
-2. Sources, in priority order (first hit per key wins; later duplicates still
-   emit occurrences but merge keeps the first definition by this order):
+   `extractDocDefinitions(inputs: {blocks: TextBlock[], facts: StructureFact[]}): RawCandidateWithDef[]`
+   — issue 15's exported types. Sentence regexes (sources 4–5) run ONLY on
+   `kind: 'prose'` blocks; facts drive sources 1–3 and 6.
+   `RawCandidateWithDef = RawCandidate & {definition: string, definitionKind: 'definitionList'|'table'|'boldLead'|'jaSentence'|'enSentence'|'headingSection'}`
+   (kind `doc-defined`). definitionKind priority = that listed order (DESIGN
+   §9.4/§9.6). Line cap: every line truncated to 2000 chars before ANY E4
+   regex (B2', defense in depth).
+2. Sources (each finding tags its definitionKind; ALL findings emit — merge
+   (23) selects the highest-priority definitionKind per key):
    1. **definitionList fact** → term=fact.term, definition=fact.definition.
-   2. **table fact** whose headers match: header[0] ∈ {用語, term, Term, 名称}
-      AND header[1] ∈ {説明, 定義, description, Description, definition,
-      Definition} → each row: term=cell[0], definition=cell[1]. Tables with
-      other headers ignored.
+   2. **table fact** — headers compared after NFKC + trim + Latin lowercase:
+      header[0] ∈ {用語, term, 名称} AND header[1] ∈ {説明, 定義,
+      description, definition}. Rows must have ≥ 2 cells (only cells 0/1
+      used); rows whose cleaned term OR definition is empty are dropped;
+      source line = the ROW's own line (15's table fact records per-row
+      lines). Tables with other headers ignored.
    3. **boldLead fact** → term/rest.
    4. **JA sentence patterns** over prose blocks (linear regexes, applied per
       sentence after splitting on `。`):
       - `「?([^「」\n]{2,40})」?とは、?(.{8,300}?)(?:である|です|を指す|のこと)?$`
-        — capture term + definition body. Require the definition part ≥ 8 chars
-        to avoid fragments.
+        — capture term + definition body. Require the definition part ≥ 8
+        chars to avoid fragments.
+      Sentence splitting (normative): split block text on `。` (delimiter
+      stays with the left sentence) plus block end;
+      `source.line = block.startLine + count of '\n' before the sentence's
+      start offset`.
    5. **EN sentence patterns**: `^([A-Z][A-Za-z0-9 -]{2,60}) (?:is|are) defined as (.{8,300})$`
       and `^([A-Z][A-Za-z0-9 -]{2,60}) refers to (.{8,300})$`.
    6. **headingSection fact** where file path matches `/(glossary|用語)/i` →
@@ -54,11 +65,12 @@ is significant even at one occurrence (exempt from minOccurrences, §9.6).
 
 ## Acceptance Criteria
 
-- [ ] repo-ja-mixed yields: 支払予約 (とは-sentence, definition text exact), 与信枠+締め処理 (table rows), 売上確定 (boldLead), 締め処理 headingSection ALSO found in glossary.md (duplicate key — both emitted; priority order test asserts table definition wins later in 23's test, here both present).
+- [ ] repo-ja-mixed golden rows — assert exact (surface, definitionKind, path) tuples and that definition text starts with the fixture wording: 支払予約→jaSentence(README.md); 与信枠→table(docs/billing.md); 締め処理→table(docs/billing.md) AND →headingSection(docs/glossary.md) (both emitted; 23 selects table by priority); 売上確定→boldLead(docs/billing.md).
 - [ ] Non-matching table (other headers) ignored.
 - [ ] とは-pattern: fragment shorter than 8 chars rejected; 300-char body captured; sentence without 。 terminator still matched at block end.
 - [ ] Hostile xss.md strings pass through as raw text in definitions (no crash) — escaping is downstream's job.
-- [ ] Determinism double-run; regex linearity comments present.
+- [ ] Determinism double-run.
+- [ ] Adversarial: a 5000-char prose line is capped at 2000 before regexes; all E4 patterns complete < 100 ms on worst-case 2000-char inputs (repeated 「, repeated とは).
 
 ## Validation
 

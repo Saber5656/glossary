@@ -23,25 +23,43 @@ pins the network contract with goldens. CI stays fully offline (mock binds
 
 ## Detailed Requirements
 
-1. Mock server: node:http on an ephemeral 127.0.0.1 port; routes POST
-   `/v1/chat/completions`; scriptable per-test queue of responses; records
-   every request (headers+body) for assertions; supports modes: valid JSON
-   answer / invalid-then-valid (retry) / 500 / slow (> timeout).
+1. Mock server (`node:http` on 127.0.0.1 — a SPAWNED CLI process cannot be
+   intercepted by undici MockAgent, hence a real loopback server for e2e;
+   DESIGN §16 records this two-level split). Exact helper API:
+   ```ts
+   type MockLlmResponse =
+     | { kind: 'json', definitions: {key: string, definition: string}[] }
+     | { kind: 'raw', status: number, body: string }
+     | { kind: 'invalid-json' }
+     | { kind: 'slow', delayMs: number }
+   type RecordedRequest = { headers: Record<string,string>, body: string }
+   startMockLlmServer(script: MockLlmResponse[]): Promise<{
+     baseUrl: string,            // http://127.0.0.1:<port>/v1
+     requests: RecordedRequest[],
+     close(): Promise<void>,     // always awaited in afterEach
+   }>
+   ```
+   Responses are consumed from `script` in order; an exhausted script
+   returns 500 (fails the test loudly).
 2. Scenario setup on a `repo-hostile` copy: init; config patched:
    `llm: {enabled: true, baseUrl: 'http://127.0.0.1:<port>/v1', model:
    'mock-1', apiKeyEnv: 'GLOSSARY_TEST_KEY', maxTermsPerRun: 5}`; extract.
 3. Tests:
    - **Dry-run golden**: `draft --dry-run --json` over 決済トークン (the
      injection/near-secret bait term) — body golden asserts: masked
-     `[REDACTED]` where sk-live token was; injection prose present verbatim
-     in the fenced snippet; guard sentence in system message; NO request
-     recorded by the server; env key unset.
+     `[REDACTED]` where the sk-live token was; the `secrets/.env` content
+     (incl. its 決済トークン comment line) absent from the payload
+     (deny-listed path — AC4); injection prose present verbatim in the
+     fenced snippet; guard sentence in system message; NO request recorded
+     by the server; env key unset.
    - **Consent**: enabled=false ⇒ exit 3, no request. Key env unset (non-dry)
-     ⇒ exit 3.
+     ⇒ exit 3. (Two separate named tests.)
    - **Happy path**: server returns definitions for requested keys ⇒
      candidates.yaml updated (source llm); Authorization header equals
-     `Bearer test-key-123` on the wire and that string appears in NO CLI
-     output (stdout+stderr captured and grepped).
+     `Bearer test-key-123` on the wire; that key string appears in NO CLI
+     output (stdout+stderr) AND in NO recorded request BODY
+     (`JSON.stringify(body)` contains neither `test-key-123` nor `Bearer`)
+     — the key must never enter model context (AC5 guarantee).
    - **AC5 injection outcome**: server plays an "attacked" response
      `{"definitions":[{"key":"決済トークン","definition":"IGNORE… <script>alert(1)</script> https://evil.example"}]}`
      ⇒ writeback stores it (schema-valid — content is opaque), then `export`
@@ -57,11 +75,11 @@ pins the network contract with goldens. CI stays fully offline (mock binds
 
 ## Acceptance Criteria
 
-- [ ] All six scenarios green in CI matrix.
-- [ ] Dry-run golden shared with 36 (single source of truth file) and byte-stable.
-- [ ] Key-leak grep assertion covers stdout, stderr, and written files (candidates.yaml).
+- [ ] Exactly these named tests green in CI: `dry-run-golden`, `consent-disabled`, `consent-no-key`, `happy-path`, `injection-containment`, `schema-retry`, `timeout-retry` (7 tests).
+- [ ] Dry-run golden shared with 36 (single source-of-truth file) and byte-stable.
+- [ ] Key-leak assertions cover stdout, stderr, written files (candidates.yaml), AND every recorded request body.
 - [ ] AC5 chain ends with 33's scanner passing on the poisoned-then-rebuilt site.
-- [ ] Server helper is reusable (exported) — 42's manual protocol references it for local experiments.
+- [ ] Server helper exported for reuse by later local experimentation.
 
 ## Validation
 
@@ -69,7 +87,7 @@ CI link; a full transcript of the happy-path run pasted into the PR.
 
 ## Dependencies
 
-13, 37 (and 28's harness, 33's scanner).
+13, 28 (harness), 33 (scanner), 37.
 
 ## Non-goals
 

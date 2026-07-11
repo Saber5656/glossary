@@ -23,7 +23,9 @@ approving; these commands are the primary human interface to the data.
 1. `list`:
    - Flags: `--status candidate|curated|rejected` (default `candidate`),
      `--kind domain|code|abbreviation|doc-defined`, `--limit N` (default 50,
-     0 = all), `--json`.
+     0 = all), `--json`. `--kind` combined with `--status rejected` ⇒
+     `UsageError(E_USAGE, '--kind cannot be used with --status rejected')`
+     (rejected entries have no kind).
    - candidate rows: `KEY  KIND  SCORE  OCC  SUGGESTED?` (SUGGESTED? = `doc`/
      `llm`/`-`), ordered as stored (score desc). curated rows:
      `ID  TERM  KIND  TAGS  DEF?` ordered by id. rejected rows:
@@ -34,9 +36,11 @@ approving; these commands are the primary human interface to the data.
    - `--json` data: `{status, total, items: [...]}` where items are the raw
      store records (candidate/term/rejected schemas).
 2. `show <key-or-id>`:
-   - Resolution order: candidates key (after termKey-normalizing input) →
-     curated id → curated term/alias key → rejected key. Not found ⇒
-     UsageError E_KEY_NOT_FOUND listing the closest 3 keys by prefix match.
+   - Resolution order (DESIGN §10.4): candidates key (after
+     termKey-normalizing input) → curated id → curated term/alias key →
+     rejected key. Not found ⇒ UsageError E_KEY_NOT_FOUND with suggestions:
+     the first 3 keys (codepoint-sorted) from the same resolution universe
+     whose key starts with the normalized input; empty when none match.
    - Candidate view: all fields + each source as `path:line  snippet`.
    - Curated view: full record; definition printed verbatim; `definitionSource
      llm` renders a `[LLM draft — review required]` marker line.
@@ -46,16 +50,25 @@ approving; these commands are the primary human interface to the data.
      count; +llm-definition count), rejected total; `lastExtract` from
      candidates.yaml generatedAt (null if absent); tokenizer availability NOT
      probed here (extract-time info only).
-   - Human: small fixed table; `--json` frozen:
+   - Human output: exactly these rows in this order (label left, value
+     right): `candidates` (total), one indented row per kind present,
+     `curated` (total), per-kind rows, `  pending definition`,
+     `  llm definitions`, `rejected`, `last extract` (ISO or `-`).
+   - `--json` frozen:
      `{candidates: {total, byKind}, curated: {total, byKind, pendingDefinition, llmDefinition}, rejected: n, lastExtract: iso|null}`.
-4. All three commands are strictly read-only (fs-spy test: zero writes).
+4. Store-failure behavior (B2): candidates/rejected schema failures surface
+   their store errors (`E_SCHEMA_INVALID` / `E_YAML_*`, exit 1); invalid
+   curated term files are SKIPPED with one warning each (from
+   readAllTerms problems) — warnings ride the envelope in `--json`.
+5. All three commands are strictly read-only (fs-spy test: zero writes).
 
 ## Acceptance Criteria
 
 - [ ] Fixture-driven runCli tests for each command × human + json snapshots.
 - [ ] JA alignment: list output columns align for rows mixing 支払予約 and `slo` (width function tested).
-- [ ] show resolves by candidate key, curated id, alias, rejected key (4 tests); not-found suggests prefix matches; JA input normalizes (`show 「支払予約」` works).
-- [ ] `--limit 0` returns all; default caps at 50 with correct footer.
+- [ ] show resolves by candidate key, curated id, alias, rejected key (4 tests); not-found suggestion rule asserted (prefix matches, sorted, ≤3, empty case); JA input normalizes (`show 「支払予約」` works).
+- [ ] `--limit 0` returns all; default caps at 50 with correct footer; `--kind` with `--status rejected` exits 2 with E_USAGE.
+- [ ] Broken curated file ⇒ list/status still succeed with a warning in the envelope; broken candidates.yaml ⇒ exit 1 with store error.
 - [ ] Read-only fs-spy passes.
 
 ## Validation
@@ -73,4 +86,5 @@ Interactive TUI, fuzzy search (prefix suggestion only), pagination beyond
 
 ## Design References
 
-DESIGN.md §10.3–10.5, §7.3–7.5 (record shapes), §14 (output conventions).
+DESIGN.md §10 (command table + envelope), §7.3–7.5 (record shapes), §14
+(errors/logging); issue 06 (JSON envelope convention).

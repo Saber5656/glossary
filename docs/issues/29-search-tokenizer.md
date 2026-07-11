@@ -22,41 +22,53 @@ it in the client.
 
 ## Detailed Requirements
 
-1. `searchTokenize(text: string): string[]` pipeline:
-   1. NFKC normalize; lowercase (full string — JA unaffected).
-   2. Segment into script runs: `latin` (`[a-z0-9]+` after lowering, including
-      digits), `cjk` (`\p{Script=Han}|\p{Script=Hiragana}|\p{Script=Katakana}|ー`),
-      other chars are separators.
-   3. Latin runs: emit the run itself; additionally, if the ORIGINAL text at
-      that position was a mixed-case/underscore identifier, callers pre-split —
-      here simply also emit `splitIdentifier`-style sub-tokens when the run
-      contains digits attached to letters (`utf8` → `utf8`, `utf`, `8`).
-      (Import `splitIdentifier` from 18 — allowed: it is pure/isomorphic.)
-   4. CJK runs: emit character bigrams (sliding window, step 1); a run of
-      length 1 emits the unigram; **katakana runs additionally emit the whole
-      run** as one token (research §3).
-   5. Deduplicate preserving first-occurrence order.
-2. Token cap: at most 512 tokens per input (defensive; longer inputs
-   truncated with no error).
-3. Isomorphism: no imports besides 18's module; no `node:*`; works under
-   `es2023` browser target (regex `u`/`v` flags OK; Unicode property escapes
-   OK in all target browsers/Node — document baseline: Node ≥22, evergreen
-   browsers 2024+).
-4. Export also `SEARCH_FIELD_WEIGHTS = {term: 3, aliases: 2, reading: 2,
-   definition: 1, tags: 1}` (single source for 30/32) and
-   `searchOptions()` returning the MiniSearch options object
-   (`{tokenize: searchTokenize, searchOptions: {prefix: true, boost: SEARCH_FIELD_WEIGHTS, combineWith: 'AND'}}`)
-   so builder and client cannot diverge.
+1. `searchTokenize(text: string): string[]` pipeline (ORDER MATTERS —
+   identifier splitting sees the pre-lowercase original):
+   0. Input cap: slice input to its first 10_000 chars before ANY work
+      (browser-side DoS guard).
+   1. NFKC normalize (case preserved at this point).
+   2. Segment into script runs by class: `latin` = `[A-Za-z0-9]+`;
+      `katakana` = `[\p{Script=Katakana}ー]+`; `han` = `\p{Script=Han}+`;
+      `hiragana` = `\p{Script=Hiragana}+`; every other char is a separator.
+   3. Latin runs: compute `subs = splitIdentifier(run)` (issue 18 — pure,
+      isomorphic, sees the original casing). Emit the lowercased whole run
+      when `subs.length > 1`, then every sub-token. A single-token run emits
+      just that token.
+   4. katakana runs: emit the whole run FIRST, then its character bigrams
+      (a length-1/2 run's bigram set may equal the run — dedup handles it).
+      han / hiragana runs: emit character bigrams (length-1 run → unigram).
+   5. Deduplicate preserving first-occurrence order; cap output at 512
+      tokens.
+   Frozen examples (each an exact-array test):
+   - `PaymentReservation` → `['paymentreservation','payment','reservation']`
+   - `AUTH_TIMEOUT_MS` → `['auth','timeout','ms']`
+   - `utf8Decoder` → `['utf8decoder','utf','8','decoder']`
+   - `支払予約API` → `['支払','払予','予約','api']`
+   - `オーソリ予約` → `['オーソリ','オー','ーソ','ソリ','予約']`
+   - `予約する` → `['予約','する']`
+   - `ＳＬＯとは` → `['slo','とは']`
+2. Isomorphism: no imports besides 18's module; no `node:*`; works under
+   `es2023` browser target (Unicode property escapes OK — baseline: Node
+   ≥22, evergreen browsers 2024+).
+3. Exports (single source for 30/32):
+   ```ts
+   export const SEARCH_FIELD_WEIGHTS =
+     { term: 3, aliasesText: 2, reading: 2, definition: 1, tagsText: 1 }
+   export function searchTokenize(text: string): string[]
+   export function miniSearchOptions(): {
+     tokenize: typeof searchTokenize,
+     searchOptions: { prefix: true, boost: typeof SEARCH_FIELD_WEIGHTS, combineWith: 'AND' }
+   }
+   ```
+   Issue 30 adds `fields`/`storeFields`/`idField` when CONSTRUCTING
+   MiniSearch — they are index-shape concerns, not tokenizer concerns.
 
 ## Acceptance Criteria
 
-- [ ] `searchTokenize('支払予約')` → ['支払','払予','予約'] (order preserved).
-- [ ] `searchTokenize('オーソリ')` → ['オーソリ','オー','ーソ','ソリ'] (whole-run token first or documented order — freeze it).
-- [ ] `searchTokenize('Payment Reservation')` → ['payment','reservation'].
-- [ ] `searchTokenize('ＳＬＯとは')` → NFKC folds to ['slo','とは'-bigrams…] (assert 'slo' present).
-- [ ] Mixed `支払予約API` yields both CJK bigrams and 'api'.
-- [ ] 1-char CJK input → unigram; empty/whitespace → [].
-- [ ] Dedup and 512-cap tested; module import graph contains no node builtins (lint rule or unit assertion via source scan).
+- [ ] Every frozen example above asserted as an exact array (7 tests).
+- [ ] `searchTokenize('支払予約')` → `['支払','払予','予約']`; 1-char CJK input → unigram; empty/whitespace → `[]`.
+- [ ] Dedup, 512-token cap, and the 10_000-char input cap tested (a 100k-char input completes < 50 ms and is truncated).
+- [ ] Module import graph contains no node builtins (unit assertion via source scan).
 
 ## Validation
 
@@ -64,7 +76,8 @@ it in the client.
 
 ## Dependencies
 
-01, 08 (normalize reuse if applicable), 18.
+01, 08, 18 (identifier splitting — this module is NOT dependency-free; it is
+node-builtin-free).
 
 ## Non-goals
 

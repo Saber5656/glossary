@@ -21,7 +21,12 @@ turns a cryptic token into a self-explanatory candidate.
 ## Detailed Requirements
 
 1. Signature:
-   `extractAbbreviations(inputs: {blocks: PositionedText[], comments: PositionedText[], acronymTokens: {raw, path, line}[]}, cfg: {minOccurrences, stopwords: Set<string>}): RawCandidate[]`.
+   `extractAbbreviations(inputs: {blocks: TextBlock[], comments: CodeComment[], acronymTokens: {raw: string, path: string, line: number}[]}, cfg: {minOccurrences: number, stopwords: Set<string>}): RawCandidate[]`
+   — `TextBlock` from issue 15 (use `prose`/`heading`; skip code-in-doc),
+   `CodeComment` from issue 16; `acronymTokens` = raw identifier tokens where
+   `isLikelyAcronymToken` (18) is true, collated by the pipeline (24).
+   Line cap: every line truncated to 2000 chars before ANY E3 regex (B2',
+   defense in depth).
 2. Candidate detection (kind `abbreviation`):
    - ALL-CAPS tokens `\b[A-Z][A-Z0-9]{1,5}\b` in prose/comments (2–6 chars),
      excluding tokens immediately preceded/followed by `_` (identifier parts
@@ -39,22 +44,27 @@ turns a cryptic token into a self-explanatory candidate.
    - `ABBR（日本語正式名）` / `ABBR (日本語正式名)`: ABBR followed by a
      parenthesized non-ASCII phrase ≤ 30 chars.
    - Katakana prefix rule above.
-   When found, RawCandidate gains `expansion: string` (extend RawCandidate
-   with optional field; merge (23) copies the first expansion into
-   `suggestedDefinition` ONLY IF E4 supplied none, formatted as
-   `"<expansion> の略。"` (ja) / `"Abbreviation of <expansion>."` (en by
-   definitionLanguage) — implement the formatting in 23, E3 only records
-   `expansion`).
+   When found, the RawCandidate records `expansion: string` (the optional
+   field defined in DESIGN §9.4). Formatting expansion →
+   `suggestedDefinition` happens in merge (23) per DESIGN §9.6 step 7 — E3
+   only records it. Identifier-derived acronym tokens receive an `expansion`
+   only when the same surface is paired in a prose/comment block elsewhere
+   in the corpus; otherwise they emit without one.
 4. Stoplist `src/extract/stopwords-abbr.ts` (≥ 40): HTTP, HTTPS, HTML, CSS,
    JSON, YAML, XML, API, URL, URI, UUID, ID, DB, SQL, CLI, GUI, UI, UX, OS,
    CPU, GPU, RAM, TCP, UDP, IP, DNS, TLS, SSL, SSH, README, TODO, FIXME, NOTE,
    WARN, INFO, DEBUG, ERROR, OK, NG, PR, CI, CD, npm-ish tokens (NPM), GET,
    POST, PUT, DELETE, PATCH. User stopwords merge (same file as E1's user
    list — a single user stopword file feeds all extractors).
-5. minOccurrences (default 2) applied per surface across the corpus BEFORE
-   emission; paired-with-expansion candidates are exempt (explicit definition
-   evidence beats frequency, mirroring E4's exemption).
-6. Determinism: outputs sorted (surface, path, line).
+5. Filtering order (normative): (1) stopwords — built-in + user — ALWAYS win,
+   including for expansion-paired surfaces and acronymTokens; then (2)
+   minOccurrences (default 2) per surface across the corpus, with
+   expansion-paired surfaces exempt (explicit definition evidence beats
+   frequency, mirroring E4's exemption).
+6. Emission cardinality: after surface-level filtering, emit ONE RawCandidate
+   per surviving OCCURRENCE (own source path/line and snippet; `expansion`
+   recorded on every raw of that surface) — issue 23 counts raws as
+   occurrences. Determinism: outputs sorted (surface, path, line).
 
 ## Acceptance Criteria
 
@@ -62,7 +72,8 @@ turns a cryptic token into a self-explanatory candidate.
 - [ ] Initials check: `Central Processing Unit (CPU)` pairs but CPU still dropped by stoplist (pairing≠bypass stoplist — stoplist wins; test).
 - [ ] `AUTH` from AUTH_TIMEOUT_MS arrives via acronymTokens path and counts occurrences with prose `AUTH` mentions.
 - [ ] Single occurrence without expansion dropped; single WITH expansion kept.
-- [ ] Determinism double-run; regex linearity documented.
+- [ ] Determinism double-run.
+- [ ] Every E3 regex listed in one code table with a linearity note; adversarial test runs all patterns over worst-case 2000-char lines (all caps / all parens) in < 100 ms.
 
 ## Validation
 

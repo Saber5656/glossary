@@ -28,24 +28,45 @@ deterministic output (§4) requires that no module calls `Date.now()` directly.
    - `class ValidationFailed extends GlossaryError` → exitCode 3.
    - `class RuntimeError extends GlossaryError` → exitCode 1.
    - Constructor signature: `(code: string, message: string, opts?: {cause?: unknown, hint?: string})`.
+     `GlossaryError` declares `readonly hint?: string` and passes `cause` to
+     `super(message, {cause})`.
    - Export `const ErrorCodes` object freezing the initial code list:
      `E_CONFIG_INVALID`, `E_CONFIG_NOT_FOUND`, `E_PATH_ESCAPE`,
      `E_YAML_TOO_LARGE`, `E_YAML_INVALID`, `E_SCHEMA_INVALID`,
      `E_KEY_NOT_FOUND`, `E_ID_CONFLICT`, `E_LLM_CONSENT`, `E_LLM_HTTP`,
-     `E_LLM_SCHEMA`, `E_OUTDIR_UNSAFE`, `E_NOT_INITIALIZED`. Later issues may
-     append codes here (single source of truth).
-   - `formatError(err: unknown, verbose: boolean): string` — one-line message
-     `error <code>: <message>` plus `hint:` line if present; stack trace only
-     when `verbose`.
+     `E_LLM_SCHEMA`, `E_OUTDIR_UNSAFE`, `E_NOT_INITIALIZED`, `E_USAGE`,
+     `E_UNEXPECTED`. Later issues may append codes here (single source of
+     truth).
+   - `toGlossaryError(err: unknown): GlossaryError` — returns `err` if it
+     already is one; otherwise wraps as
+     `RuntimeError(ErrorCodes.E_UNEXPECTED, 'unexpected error: ' + String(message ?? err), {cause: err})`.
+   - `formatError(err: unknown, verbose: boolean): string` — applies
+     `toGlossaryError` first, then renders:
+     non-verbose = `error <code>: <message>` plus `hint: <hint>` on a second
+     line when present; verbose = the same plus the error's stack and, when
+     `cause` is an Error, `caused by:` + the cause's stack.
 2. `logger.ts`:
+   - Interface (exported):
+     ```ts
+     interface Logger {
+       error(message: string): void; warn(message: string): void;
+       info(message: string): void; debug(message: string): void;
+       warnings(): string[];
+     }
+     ```
    - Levels `error|warn|info|debug`; default threshold `info`; `--verbose` ⇒
-     `debug`. All output to **stderr**. `NO_COLOR` env or `--no-color` disables
-     ANSI (colors: error red, warn yellow only; keep minimal).
-   - Factory `createLogger(opts: {verbose: boolean, color: boolean})`; logger
-     collects warnings: `logger.warnings(): string[]` for command summaries
-     and `--json` embedding (DESIGN §14).
-   - Never logs values of env vars; add a guard helper
-     `redactEnvValue(name, text)` used by LLM issues.
+     `debug`. All output to **stderr** (colors: error red, warn yellow only).
+   - Factory `createLogger(opts: {verbose: boolean; color: boolean; env?: NodeJS.ProcessEnv})`
+     (env defaults to `process.env`); effective color =
+     `opts.color && !env.NO_COLOR`.
+   - `warnings()` returns every `warn(...)` message verbatim (plain text, no
+     ANSI), in emission order — consumed by command summaries and `--json`
+     embedding (DESIGN §14).
+   - `redactEnvValue(name: string, text: string, env?: NodeJS.ProcessEnv): string`
+     — when `env[name]` is a non-empty string, replaces every occurrence of
+     that value in `text` with `[REDACTED:<name>]`; no-op when unset/empty.
+     Used by LLM issues (35/37); unit test proves a fake key value never
+     survives.
 3. `clock.ts`: `interface Clock { now(): Date }`, `systemClock`, and
    `fixedClock(iso: string)` for tests. Helper `isoDate(clock)` → `YYYY-MM-DD`
    and `isoDateTime(clock)` → `YYYY-MM-DDTHH:mm:ssZ` (UTC, seconds precision,
@@ -53,8 +74,8 @@ deterministic output (§4) requires that no module calls `Date.now()` directly.
 
 ## Acceptance Criteria
 
-- [ ] Unit tests cover: exit-code mapping per class; formatError with/without verbose and hint; logger level filtering; NO_COLOR handling; warnings collection; fixedClock formatting (both helpers, UTC).
-- [ ] `grep -rn "Date.now\|new Date()" src --include='*.ts' | grep -v util/clock` returns nothing (enforced later by lint note; document in module header).
+- [ ] Unit tests cover: exit-code mapping per class; toGlossaryError wrapping (string throw, Error throw, GlossaryError passthrough); formatError non-verbose/verbose × with/without hint × with/without cause; logger level filtering; injected-env NO_COLOR handling; warnings collection order and plainness; redactEnvValue (set/unset/empty/multiple occurrences); fixedClock formatting (both helpers, UTC).
+- [ ] Source-scan test: a vitest that reads all files under `src/` (excluding `src/util/clock.ts`) and asserts none matches `/Date\.now\(|new Date\(/` (portable; no grep dialect dependency).
 - [ ] No module here imports from outside `src/util/` + node builtins.
 
 ## Validation

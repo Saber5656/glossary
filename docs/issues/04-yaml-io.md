@@ -24,17 +24,25 @@ loader (05) must use this module — no direct `yaml` imports elsewhere.
 ## Detailed Requirements
 
 1. `readYamlFile(absPath: string, opts?: {maxBytes?: number}): unknown`
-   - Default `maxBytes` 1 MiB (1_048_576). Check `stat.size` BEFORE reading;
-     larger ⇒ `RuntimeError(E_YAML_TOO_LARGE)` naming the file and limit.
+   - Default `maxBytes` 1 MiB (1_048_576). Check `stat.size` BEFORE reading
+     (fast reject), AND re-check the actual read bytes
+     (`Buffer.byteLength`) after reading (TOCTOU guard); either over ⇒
+     `RuntimeError(E_YAML_TOO_LARGE)` naming the file and limit.
    - Parse with the `yaml` package: `parse(text, {schema: 'core', version: '1.2', maxAliasCount: 100, uniqueKeys: true})`.
    - Reject documents nested deeper than 20 levels: walk the parsed value
      iteratively; deeper ⇒ `RuntimeError(E_YAML_INVALID, 'nesting too deep')`.
    - Multiple documents (`---`) ⇒ `E_YAML_INVALID`.
-   - Parse errors wrap into `E_YAML_INVALID` with 1-based line/col in message.
+   - Parse errors wrap into `E_YAML_INVALID`; message format
+     `<absPath>:<line>:<col>: <yaml error message>` (1-based, from the yaml
+     error's position) or `<absPath>: unknown location: <message>` when the
+     library reports no position.
 2. `serializeYaml(value: JsonLike): string`
-   - `JsonLike` = null/boolean/number/string/arrays/plain objects only (assert
-     at runtime; Dates/Maps/undefined ⇒ throw RuntimeError — callers convert
-     first).
+   - `JsonLike` = null | boolean | **finite** number | string | JsonLike[] |
+     plain records (own enumerable string keys only, prototype
+     `Object.prototype` or `null`). Runtime-assert recursively; `NaN`,
+     `±Infinity`, BigInt, symbols, functions, Dates, Maps, Sets, class
+     instances, and `undefined` values ⇒ `RuntimeError(E_YAML_INVALID)` —
+     callers convert first.
    - Options: `lineWidth: 0` (no folding), `indent: 2`, `defaultStringType`
      plain with automatic quoting as the yaml lib decides deterministically;
      block literals (`|`) for strings containing `\n`.
@@ -42,10 +50,14 @@ loader (05) must use this module — no direct `yaml` imports elsewhere.
      schema order); no sorting inside this module.
    - Output always ends with exactly one `\n`; LF only.
 3. `writeYamlFile(absPath, value, opts?: {header?: string})`
-   - Optional `header` comment lines (e.g. `# GENERATED — do not edit`)
-     prefixed with `# `.
-   - Atomic: write to `${absPath}.tmp-<pid>` in the same directory, `fsync`,
-     then `rename`. Create parent dirs. Permissions 0644.
+   - `header` is RAW text WITHOUT comment markers (e.g.
+     `"GENERATED — do not edit"`); the module splits it on newlines and emits
+     each non-empty line as `# ${line}` before the YAML body.
+   - Atomic algorithm (exact): create parent dirs → write
+     `${absPath}.tmp-<pid>` with mode 0644 → `fsync` the temp fd → close →
+     `rename` over `absPath` → best-effort `fsync` of the parent directory
+     (ignore platforms/errors where unsupported). On any failure before a
+     successful rename, best-effort unlink the temp file in `finally`.
 4. Module exports `YAML_LIMITS` constants for reuse in docs/tests.
 
 ## Acceptance Criteria
@@ -54,7 +66,8 @@ loader (05) must use this module — no direct `yaml` imports elsewhere.
 - [ ] Round-trip test: serialize → read → deep-equal for a value using JA strings, multiline strings, arrays of objects.
 - [ ] Determinism test: serializing the same object twice is byte-identical; output ends with single `\n`.
 - [ ] Atomicity test: no `.tmp-` file remains after success or after injected rename failure.
-- [ ] `grep -rn "from 'yaml'" src --include='*.ts' | grep -v store/yaml-io` → empty.
+- [ ] JsonLike assertion tests: NaN, Infinity, BigInt, Date, Map, class instance, undefined-valued key, symbol key — each rejected; null-prototype record accepted.
+- [ ] Source-scan test: no file under `src/` except `src/store/yaml-io.ts` matches `/from ['"]yaml['"]|require\(['"]yaml['"]\)|import\(['"]yaml['"]\)/` (vitest source scan, portable).
 
 ## Validation
 

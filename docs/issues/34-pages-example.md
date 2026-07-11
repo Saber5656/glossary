@@ -19,14 +19,18 @@ propagate).
 
 ## Scope
 
-- `examples/pages.yml`, `docs/guides/hosting.md`. NOT installed into this
-  repo's workflows (this repo dogfoods separately in 42 if desired).
+- `examples/pages.yml`, `docs/guides/hosting.md`, PLUS one amendment to
+  `.github/workflows/ci.yml`: the actionlint step (Req 3). The Pages workflow
+  itself is NOT installed into this repo (this repo dogfoods separately in
+  42 if desired).
 
 ## Detailed Requirements
 
 1. `examples/pages.yml`:
    - Trigger: `push` to `main` with `paths: ['glossary/**']` +
-     `workflow_dispatch`.
+     `workflow_dispatch`. Branch guard: both jobs carry
+     `if: github.ref == 'refs/heads/main'` so a manual dispatch from another
+     ref cannot deploy.
    - `permissions:` block exactly: `contents: read`, `pages: write`,
      `id-token: write` (the Pages deploy minimum) — top level, single job
      chain `build` → `deploy` using `actions/upload-pages-artifact` +
@@ -48,18 +52,19 @@ propagate).
      (X-Content-Type-Options, Referrer-Policy) with a table.
    - Local preview: `python3 -m http.server -d glossary/site` (or
      `npx serve`), and why file:// won't work (fetch of JSONs).
-3. Workflow YAML must pass `actionlint` (add as a dev script `lint:actions`
-   scanning `.github/workflows` AND `examples/` — actionlint binary via
-   `npx`? NO binary deps: instead validate in CI with the official
-   actionlint docker/binary is NOT acceptable either → use
-   `actionlint`'s GitHub Action in OUR ci.yml, SHA-pinned, scanning both
-   dirs — amend ci.yml here).
+3. actionlint validation — exactly ONE implementation path, CI-only (no dev
+   script, no local binary dependency): add a job `actionlint` to
+   `.github/workflows/ci.yml` — checkout (SHA-pinned) → run the actionlint
+   GitHub Action (SHA-pinned, `# vX.Y.Z` comment) configured to scan
+   `.github/workflows/*.yml` AND `examples/*.yml`; `permissions: contents:
+   read`; timeout 5 min. Local runs remain possible via
+   `npx actionlint` but are not wired into npm scripts.
 
 ## Acceptance Criteria
 
-- [ ] actionlint (CI step) passes over ci.yml + examples/pages.yml.
-- [ ] pages.yml has the exact permissions block, SHA-pinned actions, path filter, concurrency, and the visibility warning comment.
-- [ ] hosting.md covers Pages setup, generic hosts + header table, local preview, and the sensitivity warning.
+- [ ] actionlint CI job passes over ci.yml + examples/pages.yml.
+- [ ] pages.yml has the exact permissions block, SHA-pinned actions, path filter, branch guard on both jobs, concurrency, and the visibility warning comment.
+- [ ] hosting.md contains exactly these H2 sections: "GitHub Pages", "Other static hosts", "Recommended HTTP headers" (table with rows X-Content-Type-Options: nosniff / Referrer-Policy: no-referrer / Cache-Control note), "Local preview" (`python3 -m http.server -d glossary/site` and `npx serve glossary/site`, plus why file:// fails), and a warning block containing the sentence "the site publishes your glossary content — confirm the hosting visibility matches its sensitivity".
 - [ ] Dry validation: the workflow runs green in a scratch fork/testing repo with a sample glossary (paste run link in the PR — one-time manual proof).
 
 ## Validation
@@ -69,7 +74,7 @@ step-by-step reproducibility.
 
 ## Dependencies
 
-31 (site exists to deploy); 02 (ci.yml to amend).
+02 (ci.yml to amend), 31 (site exists to deploy).
 
 ## Non-goals
 

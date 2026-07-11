@@ -25,23 +25,35 @@ this wrong corrupts all downstream behavior, so the contract is frozen here.
 1. Schema: implement DESIGN.md §7.2 verbatim — top-level keys `schemaVersion`,
    `include`, `exclude`, `scan`, `extract`, `export`, `site`, `llm` with the
    exact sub-keys, types, and defaults listed there. Constraints:
-   - `schemaVersion` literal `1`.
+   - `schemaVersion`: `z.literal(1).default(1)`.
    - `.strict()` at every object level (unknown key ⇒ error, fail closed).
    - `include` non-empty array of strings; defaults
      `["**/*.md", "**/*.mdx", "src/**"]`.
    - `site.locale` enum `ja|en`; `llm.definitionLanguage` enum `ja|en`.
-   - Numeric bounds: `scan.maxFileSizeKB` 1–10240; `extract.maxCandidates`
-     1–5000; `llm.maxTermsPerRun` 1–200; `llm.snippetContextLines` 0–10;
+   - Numeric bounds (all numeric fields must be finite; integers unless
+     noted): `scan.maxFileSizeKB` 1–10240; `extract.maxCandidates` 1–5000;
+     `extract.minOccurrences` 1–100;
+     `extract.extractors.jaDomain.minScore` 0–1000 (float);
+     `extract.extractors.identifiers.minOccurrences` 1–100;
+     `extract.extractors.abbreviations.minOccurrences` 1–100;
+     `llm.maxTermsPerRun` 1–200; `llm.snippetContextLines` 0–10;
      `llm.maxSnippetsPerTerm` 1–20; `llm.timeoutMs` 1000–120000.
+   - `scan.followSymlinks`: `z.literal(false).default(false)` — reserved key;
+     `true` is rejected in v1 (DESIGN §9.1, §13-B1).
    - `llm.apiKeyEnv` matches `^[A-Z][A-Z0-9_]*$`.
-   - `export.path` and `site.outDir` are repo-relative paths; reject absolute
-     paths and any path containing `..` segments (`E_PATH_ESCAPE`).
+   - Repo-relative path fields — `export.path`, `site.outDir`, and
+     `extract.stopwordsPath` (when non-null): reject absolute paths and any
+     `..` segment (`E_PATH_ESCAPE`).
+   - Empty config file and YAML `null` are treated as `{}`: every key
+     defaults, loading to exactly `DEFAULT_CONFIG`.
 2. `resolvePaths(cwd, flags: {repo?: string, dir?: string})`:
    - `repoRoot` = `--repo` if given, else nearest ancestor of `cwd` containing
      `.git` (dir or file), else `cwd`. Always `path.resolve`d.
    - `glossaryDir` = resolve(`repoRoot`, `--dir` ?? `glossary`); MUST stay
-     under `repoRoot` after resolution (symlink-free `path.resolve` check) or
-     `UsageError(E_PATH_ESCAPE)`.
+     under `repoRoot` after `path.resolve`, or `UsageError(E_PATH_ESCAPE)`.
+     Additionally, when `glossaryDir` already exists, its `fs.realpath` MUST
+     stay under the repoRoot realpath — a `glossary → /tmp/outside` symlink
+     is rejected with `E_PATH_ESCAPE` (§13-B1).
    - Returns `{repoRoot, glossaryDir, configPath: glossaryDir/config.yaml}`.
 3. `loadConfig(configPath): Config`:
    - Missing file ⇒ `UsageError(E_NOT_INITIALIZED, hint: "run 'glossary init'")`.
@@ -51,13 +63,16 @@ this wrong corrupts all downstream behavior, so the contract is frozen here.
      lines.
    - Returns fully-defaulted `Config` (all optionals resolved).
 4. Export `DEFAULT_CONFIG: Config` (used by `init`, issue 07) and
-   `defaultConfigYaml(): string` rendering the commented default file content
-   (comments explaining each section, ≤ 60 lines, matches schema).
+   `defaultConfigYaml(dirName = 'glossary'): string` rendering the commented
+   default file content (comments explaining each section, ≤ 60 lines,
+   matches schema). `site.outDir` renders as `<dirName>/site` so a
+   non-default `--dir` keeps all managed artifacts under one directory
+   (DESIGN §6/§7.2).
 
 ## Acceptance Criteria
 
-- [ ] Unit tests: defaults application (empty file ⇒ error? NO — missing keys fine, `{}` with `schemaVersion: 1` yields full defaults); unknown key rejected at top and nested levels; every numeric bound rejected outside range; absolute/`..` paths rejected; `resolvePaths` finds repo root from a nested dir; `--dir` escape attempt rejected.
-- [ ] `defaultConfigYaml()` parses back through `loadConfig` byte-safe (write to temp, load, deep-equal DEFAULT_CONFIG).
+- [ ] Unit tests: empty file, YAML `null`, and `{}` each load to `DEFAULT_CONFIG`; unknown key rejected at top and nested levels; every numeric bound rejected outside range incl. NaN/Infinity; `followSymlinks: true` rejected; absolute/`..` paths rejected for `export.path`, `site.outDir`, AND `stopwordsPath`; `resolvePaths` finds repo root from a nested dir; `--dir` escape attempt rejected; existing `glossary → outside` symlink dir rejected via the realpath check.
+- [ ] `defaultConfigYaml()` parses back through `loadConfig` (write to temp, load, deep-equal DEFAULT_CONFIG); `defaultConfigYaml('docs/glossary')` yields `site.outDir: docs/glossary/site` and still validates.
 - [ ] Error message for a config with 3 problems lists all 3 with YAML paths.
 
 ## Validation

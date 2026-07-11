@@ -29,7 +29,9 @@ primary persona is Japanese (README.ja.md must be complete, not a summary).
    - Install (v1): `git clone` → `npm ci` → `npm run build` → `npm link`;
      Node ≥ 22 requirement; verification `glossary --version`.
    - Quick start: init → extract → list/show → approve/reject → export →
-     build → serve locally (link hosting.md).
+     build → preview locally with the exact command
+     `python3 -m http.server -d glossary/site 8000` (link hosting.md for
+     deployment).
    - Configuration: table of every config key (§7.2) with defaults — GENERATE
      faithfully from the design (drift here is a doc bug).
    - LLM drafting (opt-in): consent model, dry-run example, redaction summary,
@@ -41,25 +43,29 @@ primary persona is Japanese (README.ja.md must be complete, not a summary).
    - Credits/licenses: MIT + kuromoji Apache-2.0 + IPADIC notice (ADR-003 §5).
 2. `README.ja.md`: full Japanese equivalent (not a stub) — same section set,
    natural Japanese, identical command examples.
-3. `docs/guides/usage.md`: per-command reference — for EACH of the 11
-   commands: synopsis, flags table, exit codes, `--json` output shape
-   (copied from the frozen shapes in issues 07/12/24–27/30/37), 2+ realistic
-   examples (JA terms), and a troubleshooting section (tokenizer fallback
-   warning, E_NOT_INITIALIZED, E_OUTDIR_UNSAFE, consent errors — each with
+3. `docs/guides/usage.md`: starts with a **Global flags** section (`--dir`,
+   `--repo`, `--json` incl. the envelope shape, `--verbose`, `--no-color`,
+   `--version`, `--help` — defaults and stdout/stderr conventions from
+   DESIGN §10); then a per-command reference — for EACH of the 11 commands:
+   synopsis, flags table, exit codes, `--json` data shape (copied from the
+   frozen shapes in issues 07/12/24–27/30/37), 2+ realistic examples (JA
+   terms); then a troubleshooting section (tokenizer fallback warning,
+   E_NOT_INITIALIZED, E_OUTDIR_UNSAFE, consent errors — each with
    cause/fix).
-4. Cross-link check: every relative link resolves (add a tiny link-check
-   script `scripts/check-docs-links.mjs` run in CI — internal links only, no
-   network).
+4. Cross-link check `scripts/check-docs-links.mjs` (run in CI): scans
+   `README.md`, `README.ja.md`, `docs/**/*.md`; validates relative FILE
+   links and intra-file heading anchors; ignores `http(s)://` URLs entirely
+   (no network); exits non-zero printing `<source>: <broken link>` lines.
 5. All examples must be copy-paste runnable against `fixtures/repo-ja-mixed`
-   (state this and verify manually once).
+   (state this and verify once via the quick-start transcript below).
 
 ## Acceptance Criteria
 
-- [ ] Both READMEs complete with the section sets above; ja version reads natively (not machine-translated register).
+- [ ] Both READMEs complete with the section sets above; README.ja.md has owner (native-Japanese) review sign-off recorded in the PR, requested fixes applied.
 - [ ] Config table matches DESIGN §7.2 key-for-key (review diff side by side).
-- [ ] usage.md covers all 11 commands × all flags; JSON shapes match the issue-frozen ones.
+- [ ] usage.md covers the global-flags section + all 11 commands × all flags; JSON shapes match the issue-frozen ones.
 - [ ] Link-check script green in CI; badge renders.
-- [ ] Quick-start transcript executed against the fixture and pasted in PR.
+- [ ] Quick-start transcript: from a CLEAN copy of `fixtures/repo-ja-mixed`, run the exact README quick-start commands under `set -e` through `glossary build`; fenced transcript (commands + key output lines) pasted in the PR.
 
 ## Validation
 
@@ -68,7 +74,9 @@ Manual execution of quick start; link-check CI step; owner reads README.ja.md
 
 ## Dependencies
 
-24, 26, 27, 30 (accurate behavior to document); 02 (CI step add).
+02 (CI step add), 07, 12, 24, 25, 26, 27, 30, 34 (hosting.md exists to link),
+37, 40 (SECURITY.md exists to link) — documentation must describe shipped
+behavior.
 
 ## Non-goals
 

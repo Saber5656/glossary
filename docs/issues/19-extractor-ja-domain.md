@@ -7,8 +7,9 @@
 ## Summary
 
 Implement extractor E1 per DESIGN.md §9.4-E1 and the FLR method from
-docs/research/japanese-term-extraction.md §4, over doc prose blocks and JA
-code comments.
+docs/research/japanese-term-extraction.md §4, over doc text blocks (prose and
+headings). Code files contribute nothing to E1 in v1 — comments are E3 input
+(DESIGN §9.4).
 
 ## Context
 
@@ -18,19 +19,22 @@ knobs so the owner's validation can tune without code change.
 
 ## Scope
 
-- E1 module + built-in JA stopword list + tests. Input: `TextBlock[]` (15) +
-  comments (16) + `JaTokenizer` (17).
+- E1 module + built-in JA stopword list + tests. Input: `TextBlock[]` (15;
+  carries `path`) + `JaTokenizer` (17).
 
 ## Detailed Requirements
 
 1. Signature:
-   `extractJaDomain(inputs: {blocks: PositionedText[]}, tokenizer: JaTokenizer | null, cfg: {minScore, minOccurrences, stopwords: Set<string>}): RawCandidate[]`
-   where `PositionedText = {text, path, line}` and
+   `extractJaDomain(inputs: {blocks: TextBlock[]}, tokenizer: JaTokenizer | null, cfg: {minScore: number, stopwords: Set<string>}): RawCandidate[]`
+   — `TextBlock` is issue 15's exported type (carries `path`). Process
+   `kind: 'prose' | 'heading'` blocks; SKIP `code-in-doc`.
    `RawCandidate = {surface, kind: 'domain', score, source: {path, line}, snippet}`
-   (one RawCandidate PER OCCURRENCE; merge/thresholding happens in 23 — but E1
-   applies its own `minScore` on the term level before emitting, see 5).
+   with `line` = block.startLine + newline offset of the occurrence within
+   the block. One RawCandidate PER OCCURRENCE; global minOccurrences and all
+   cross-extractor thresholds are issue 23's job — E1 applies ONLY its own
+   `minScore` at the term level before emitting (step 5).
 2. Candidate generation (tokenizer path):
-   - For each prose block (skip `code-in-doc`), tokenize; build noun runs via
+   - For each prose/heading block, tokenize; build noun runs via
      `nounRuns` (17).
    - From each run of length L, emit the FULL run surface only (maximal
      match; sub-spans are counted for FLR connectivity but not emitted as
@@ -43,6 +47,11 @@ knobs so the owner's validation can tune without code change.
    - Kanji runs `\p{Script=Han}{2,}` (only when tokenizer is null — otherwise
      noun runs cover them).
    - Quoted phrases `「([^」\n]{2,30})」`.
+   - Occurrence dedup (normative): before counting and emission, collapse
+     duplicates by `(termKey(surface), path, line)` — a surface found at the
+     same location by both the tokenizer path and a heuristic counts ONCE.
+   - Line cap (B2', defense in depth): truncate every line to 2000 chars
+     before ANY E1 regex, regardless of upstream capping.
 4. FLR scoring (research doc formula), computed over the whole corpus of this
    run:
    - Token unit = tokenizer tokens of each candidate (heuristic candidates:
@@ -71,15 +80,17 @@ knobs so the owner's validation can tune without code change.
 ## Acceptance Criteria
 
 - [ ] Worked FLR example passes with the exact value 3.72.
-- [ ] On repo-ja-mixed corpus: 支払予約, 与信枠, オーソリゼーション, 締め処理, 売上確定 all emitted; システム-like stopwords absent; `無視用語` absent (never scanned); code-in-doc content absent.
+- [ ] On repo-ja-mixed corpus: 支払予約, 与信枠, オーソリゼーション, 締め処理, 売上確定 all emitted; the stopword surfaces システム, データ, 情報, 処理, 確認 are absent (after termKey normalization); `無視用語` absent (never scanned); code-in-doc content absent.
 - [ ] Tokenizer-null mode: katakana + kanji-run + quoted heuristics still yield 支払予約 and オーソリゼーション (scores from heuristic path).
-- [ ] All regexes documented linear-time; 2000-char-line inputs safe (upstream capped, re-assert here on a synthetic input).
+- [ ] Dedup: a katakana term found by BOTH tokenizer and heuristic at the same (path, line) counts one occurrence in FLR's f and emits one RawCandidate.
+- [ ] Adversarial: a synthetic 5000-char line is capped to 2000 before regexes and the full pattern set completes < 100 ms on worst-case inputs (repeated 「, repeated katakana).
 - [ ] Determinism double-run test.
 
 ## Validation
 
-Unit tests + a printed top-20 candidate table for the fixture corpus attached
-to the PR (human sanity check of ranking).
+Unit tests + a committed vitest snapshot of the fixture corpus top-20
+(surface, score, occurrences, first source), sorted by (score desc, surface
+asc via compareCodepoint) — the deterministic ranking artifact.
 
 ## Dependencies
 

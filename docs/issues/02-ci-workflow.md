@@ -23,7 +23,10 @@ issue and part of the supply-chain security surface (abuse case AC6).
 ## Detailed Requirements
 
 1. Trigger: `push` to `main` and `pull_request` (no `pull_request_target`).
-2. Top-level `permissions: contents: read`. No secrets used anywhere.
+2. Top-level `permissions: contents: read`. No job-level `permissions` blocks
+   (or, if present, exactly `contents: read`); no `id-token`,
+   `pull-requests`, `actions`, or any write scope anywhere. No secrets used
+   anywhere (no `${{ secrets.` references).
 3. `concurrency: { group: ci-${{ github.ref }}, cancel-in-progress: true }`.
 4. Job `test`: matrix `node: [22, 24, 26]` × `os: [ubuntu-latest, macos-latest]`;
    steps: checkout → setup-node (with `cache: npm`) → `npm ci` →
@@ -34,17 +37,30 @@ issue and part of the supply-chain security surface (abuse case AC6).
    version comment, e.g.
    `uses: actions/checkout@<40-char-sha> # v4.x.y`. No tag/branch refs.
 7. Timeout: `timeout-minutes: 15` per job.
-8. `.github/dependabot.yml`: weekly updates for `npm` and `github-actions`
-   ecosystems, grouped minor/patch.
-9. Add a status badge to be consumed by issue 39 (badge URL in workflow name
-   `ci`).
+8. `.github/dependabot.yml`, exactly this structure:
+   ```yaml
+   version: 2
+   updates:
+     - package-ecosystem: npm
+       directory: "/"
+       schedule: { interval: weekly }
+       groups:
+         minor-and-patch:
+           update-types: ["minor", "patch"]
+     - package-ecosystem: github-actions
+       directory: "/"
+       schedule: { interval: weekly }
+   ```
+9. Workflow `name: ci` (issue 39 adds the README badge referencing this
+   name; no README change in this issue).
 
 ## Acceptance Criteria
 
 - [ ] CI runs green on a PR touching only a comment (matrix 6 jobs + windows).
-- [ ] `grep -E "uses:.*@(main|master|v[0-9])" .github/workflows/ci.yml` returns nothing (all SHA-pinned).
-- [ ] Workflow has no `pull_request_target`, no write permissions, no secret references.
-- [ ] Dependabot config validates (GitHub UI shows both ecosystems).
+- [ ] Every `uses:` reference in ci.yml matches `@[0-9a-f]{40}` — verify with `grep -E 'uses:' .github/workflows/ci.yml | grep -vE '@[0-9a-f]{40}'` returning nothing.
+- [ ] `grep -E 'pull_request_target|\$\{\{ secrets\.' .github/workflows/ci.yml` returns nothing; the only `permissions` lines are `contents: read`.
+- [ ] Dependabot config validates (GitHub UI shows both ecosystems active).
+- [ ] (actionlint validation is deferred to issue 34, which adds the SHA-pinned actionlint step covering `.github/workflows/` and `examples/`.)
 
 ## Validation
 

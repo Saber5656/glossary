@@ -25,22 +25,32 @@ messiness (huge trees, odd encodings, unexpected Markdown). Findings feed U2
 1. `scripts/smoke.sh <git-url-or-local-path> [--keep]`:
    - bash, `set -euo pipefail`; requires: git, node ≥ 22, built CLI
      (`dist/` present — error with hint `npm run build` otherwise).
-   - Workspace: `mktemp -d`; shallow clone `--depth 1 --single-branch`
-     (or copy if local path); NEVER runs inside the current repo.
-   - Steps with timing (`time -p` equivalents captured):
-     `init` → `extract --json` → `validate --json` → `export` →
-     `build` → 33's site scanner invoked via a node one-liner
-     (`node dist/... ` — expose the scanner as `npm run scan:site -- <dir>`
-     utility script; add that wiring here).
-   - Report (stdout, also written to `smoke-report-<repo>-<date>.md` in cwd):
-     repo, commit, file counts (scanned/skipped by reason), extractor counts,
-     top 20 candidates table (key/kind/score/occ), drift n/a, timings per
-     step, site scanner verdict, warnings summary.
-   - Exit non-zero if any step fails; `--keep` retains the temp dir and
-     prints its path.
-   - Safety: workspace paths quoted everywhere; no `eval`; cleanup via trap;
-     the cloned repo's content is DATA (we never execute its scripts — the
-     CLI only reads).
+   - Workspace: `work=$(mktemp -d)`; git URL ⇒ shallow clone
+     `git clone --depth 1 --single-branch <url> "$work/repo"`; LOCAL path ⇒
+     copy into `"$work/repo"` preserving symlinks WITHOUT dereferencing
+     (`cp -R -P` semantics), excluding `.git`; the CLI's own scanner guards
+     (no symlink follow, path-prefix checks) handle traversal from there.
+     NEVER runs inside the current repo.
+   - Exact step commands (cwd = the PRODUCT repo; `$R="$work/repo"`), each
+     timed:
+     1. `node dist/cli/main.js init --repo "$R"`
+     2. `node dist/cli/main.js extract --repo "$R" --json`
+     3. `node dist/cli/main.js validate --repo "$R" --json`
+     4. `node dist/cli/main.js export --repo "$R"`
+     5. `node dist/cli/main.js build --repo "$R"`
+     6. `npm run scan:site -- "$R/glossary/site"` (command provided by issue
+        33 — consumed here, not created here)
+   - Report — written to
+     `"$PWD/smoke-report-${slug}-$(date +%Y%m%d-%H%M%S).md"` where `slug` =
+     URL/path basename minus `.git`, with every char outside `[A-Za-z0-9._-]`
+     replaced by `_`. Required H2 sections in order: `Repository`, `Commit`,
+     `File Counts`, `Extractor Counts`, `Top 20 Candidates`, `Timings`,
+     `Site Scanner`, `Warnings`.
+   - Exit non-zero if any step fails. Cleanup: trap on EXIT/SIGINT/SIGTERM
+     removes `$work` UNLESS `--keep` was given (then print the path and skip
+     removal in all paths, including failure).
+   - Safety: workspace paths quoted everywhere; no `eval`; the cloned repo's
+     content is DATA (we never execute its scripts — the CLI only reads).
 2. `docs/validation/smoke-protocol.md`:
    - Candidate public repos (JA docs, active): suggest 3 concrete ones with
      rationale placeholders for the runner to confirm current state (e.g. a
@@ -57,9 +67,9 @@ messiness (huge trees, odd encodings, unexpected Markdown). Findings feed U2
 
 ## Acceptance Criteria
 
-- [ ] Smoke run against `fixtures/repo-ja-mixed` (local-path mode) completes green and produces the report file with all sections.
+- [ ] Smoke run against `fixtures/repo-ja-mixed` (local-path mode) completes green; the report file contains exactly the 8 required H2 sections in order; the filename matches the slug+timestamp pattern.
 - [ ] Smoke run against ONE real public JA-doc repo completes (or failures are triaged into filed issues); report attached to the GitHub issue.
-- [ ] `--keep` and cleanup-trap behavior verified; no temp dirs leak on failure (test by killing mid-run).
+- [ ] Cleanup semantics verified: normal failure removes the temp dir; SIGINT mid-run removes it; `--keep` preserves it in success, failure, AND signal paths (record before/after `ls` of the temp path for each case).
 - [ ] Manual shellcheck run: zero errors (paste output).
 - [ ] scan:site utility wired and reused (33's scanner, not a copy).
 
@@ -70,7 +80,7 @@ noted against the §24 budget expectations.
 
 ## Dependencies
 
-24, 30 (pipeline + build), 33 (scanner reuse).
+24, 30 (pipeline + build), 33 (provides `npm run scan:site`).
 
 ## Non-goals
 

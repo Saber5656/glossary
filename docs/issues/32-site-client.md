@@ -25,37 +25,55 @@ artifact (users don't run esbuild), so CI must prove it's honest.
 
 ## Detailed Requirements
 
-1. Client behavior (progressive enhancement; script is `type=module`):
+1. Client behavior (progressive enhancement; script is `type=module`; all
+   element lookups via issue 31's `src/site/contract.ts` DOM constants —
+   never hand-typed selectors):
    1. Fetch `./search-index.json` + `./terms.json` (same-origin relative;
-      any failure ⇒ leave static list working, log console.warn, keep search
-      disabled with tooltip string from i18n embedded in DOM data-attrs by 31).
-   2. `MiniSearch.loadJSON(indexJson, searchOptions())` (29 — bundled).
+      any failure ⇒ leave static list working, `console.warn`, keep search
+      disabled with title = `<body data-msg-search-disabled>`).
+   2. `MiniSearch.loadJSON(indexJson, miniSearchOptions())` (29 — bundled).
+      Build a `Map<id, term-record>` from terms.json — hits carry ONLY `id`
+      (30's storeFields); all display data comes from that map.
    3. Enable search input; on input (debounced 150 ms): query; empty query ⇒
       restore static list visibility; else hide static list and render
-      results container.
+      results container (empty results show `data-msg-no-results` text).
    4. Result rendering: for each hit (max 50) build DOM via
-      `document.createElement` + `textContent` ONLY (lint rule: no innerHTML/
-      insertAdjacentHTML/outerHTML in client code — eslint no-restricted-
-      properties); each result: link to `terms/<id>.html` (id from
-      storeFields; href built from a KNOWN-SAFE template `terms/${encodeURIComponent(id)}.html`),
-      term, kind badge, definition first 120 chars.
-   5. Filters: kind chips + tag select (data from terms.json); filters apply
-      to both search results and static list (hide/show via class).
+      `document.createElement` + `textContent` ONLY; each result: link with
+      href from the KNOWN-SAFE template
+      `terms/${encodeURIComponent(id)}.html`, term, kind badge, definition
+      first 120 chars — all from the terms.json map.
+   5. Filters: kind CHIPS and tag CHIPS (31's contract; data from
+      terms.json). Behavior: at most one active kind chip and one active tag
+      chip (click toggles; clicking another replaces); active filters AND
+      together and AND with the query; they apply to both search results and
+      the static list (hide/show via a class on `termItem` elements using
+      their data-kind/data-tags).
    6. No state in URL (v1), no history API, no storage APIs, no workers.
 2. Accessibility: results region `aria-live="polite"`; input labeled; chips
    are buttons with `aria-pressed`; keyboard operability (tab/enter).
 3. `scripts/build-client.mjs`: esbuild — entry app.ts, bundle, format=esm,
-   target `es2022`, minify, `define` nothing, sourcemap=false (committed
-   artifact stays reviewable-small), banner comment with source hash:
-   `/* built from src/site/client @ <sha256 of sources, 12 hex> */`.
+   target `es2022`, minify, `define` nothing, sourcemap=false. Banner comment
+   `/* built from src/site/client @ <hash12> */` where `hash12` = first 12
+   hex of sha256 over the concatenation of every file under
+   `src/site/client/**/*.ts` PLUS the two shared imports
+   (`src/tokenize/search.ts`, `src/tokenize/identifier.ts`,
+   `src/site/contract.ts`), sorted by relPath, each framed as
+   `relPath + '\0' + LF-normalized content + '\0'`.
    Output `assets/site/app.js`. `style.css` is hand-written static (no
-   preprocessor), lives directly in `assets/site/`.
+   preprocessor), lives directly in `assets/site/`. No URLs anywhere in the
+   bundle or banner (33's scanner enforces).
 4. npm scripts: `build:client`; CI (02 workflow amended here) adds step:
    run build:client then `git diff --exit-code assets/site/` (drift check).
-5. jsdom tests: inject a 3-term fixture DOM+JSONs; assert: XSS-bait term
+5. Sink lint fence for `src/site/client/**` (exact bans, with a failing
+   fixture proving each fires): `innerHTML`, `outerHTML`,
+   `insertAdjacentHTML`, `document.write`, `document.writeln`,
+   `DOMParser.prototype.parseFromString`, `Range.prototype.createContextualFragment`
+   — via eslint `no-restricted-properties`/`no-restricted-syntax` entries.
+6. jsdom tests: inject a 3-term fixture DOM+JSONs; assert: XSS-bait term
    renders as textContent (no element injection — query for img/script in
-   results = none); filter interaction; fetch-failure path leaves static list.
-6. Bundle budget: app.js ≤ 60 KB minified (MiniSearch ~30 KB) — assert size in
+   results = none); kind+tag chip AND-filtering on both list and results;
+   fetch-failure path leaves static list usable.
+7. Bundle budget: app.js ≤ 60 KB minified (MiniSearch ~30 KB) — assert size in
    test.
 
 ## Acceptance Criteria
@@ -63,8 +81,8 @@ artifact (users don't run esbuild), so CI must prove it's honest.
 - [ ] jsdom suite green incl. XSS textContent assertions and fetch-failure fallback.
 - [ ] Rebuild-diff CI step passes; touching client source without rebuilding fails CI (prove once locally, describe in PR).
 - [ ] Bundle ≤ 60 KB; banner hash present and matches recomputation.
-- [ ] eslint restriction on innerHTML-family active for `src/site/client/**` (violation fails lint — test).
-- [ ] Manual smoke on the fixture site: JA query `支払` and EN query `payment` both hit 支払予約 page (screenshot in PR).
+- [ ] Every banned DOM sink fails lint under `src/site/client/**` (fixture-file proof for each of the 7 bans).
+- [ ] Manual smoke (validation aid, exact recipe): `node dist/cli/main.js build --repo fixtures/repo-ja-mixed` on a fixture copy after scripted curation → `python3 -m http.server -d <outDir>` → open `http://localhost:8000/` → JA query `支払` and EN query `payment` both list the 支払予約 result linking `terms/payment-reservation.html`.
 
 ## Validation
 
@@ -72,8 +90,8 @@ Unit/jsdom tests; manual browser check via local static server; CI link.
 
 ## Dependencies
 
-29, 30 (data shapes), 31 (DOM contract: element ids/classes documented in a
-shared `src/site/contract.ts` — create it here, 31 imports).
+29, 30 (data shapes), 31 (imports the DOM contract `src/site/contract.ts`
+that 31 creates).
 
 ## Non-goals
 

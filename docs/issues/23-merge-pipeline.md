@@ -41,21 +41,33 @@ frozen deterministic contract that goldens (28) protect.
       - surface = most frequent raw surface; tie → compareCodepoint first.
         surfaces = distinct normalized-input surfaces sorted.
       - occurrences = raw count (per-occurrence emission contract).
-   3. suggestedDefinition: first E4 definition by source priority order (22's
-      ordering is encoded by array order — merge takes the first
-      RawCandidateWithDef in input order after sorting raws by
-      (extractor==doc-definitions first, path, line)); else if any E3
-      expansion: format `"${expansion} の略。"` (ja) or
-      `"Abbreviation of ${expansion}."` (en). Source: 'doc' in both cases
-      (abbreviation expansions ARE doc evidence). Else null.
+   3. suggestedDefinition: among the group's E4 raws, pick the one with the
+      highest-priority `definitionKind` (priority order = the union order in
+      issue 22 / DESIGN §9.4; tie → (path, line) ascending) and use its
+      `definition`; else, if any E3 raw carries `expansion`, format
+      `"${expansion} の略。"` (ja) or `"Abbreviation of ${expansion}."` (en)
+      per `cfg.definitionLanguage`. `suggestedDefinitionSource: 'doc'` in
+      both cases (expansions are doc evidence — DESIGN §7.3/§9.6 step 7).
+      Else null/null.
    4. Exclusions: key ∈ curatedKeys ⇒ drop (count into stats.curatedHits);
       key ∈ rejectedKeys ⇒ drop (stats.rejectedHits).
    5. Threshold: occurrences < minOccurrences ⇒ drop UNLESS the group contains
       an E4 raw or an E3 expansion (exemptions per §9.6/issues 21–22).
    6. Cap: sort (score desc, key asc) → slice maxCandidates
       (stats.capped = dropped count).
-   7. Evidence: ≤ 5 sources — order raws by (extractor priority as in kind,
-      then path, line), dedupe (path,line), take 5; snippets carried through.
+   7. Evidence: ≤ 5 sources — SELECT by ordering raws by (kind-priority
+      extractor first, then path, line) and deduping (path, line); the final
+      emitted `sources` array is then RE-SORTED by (path, line) per §7.3.
+      Snippet hygiene enforced here before emission: strip control chars,
+      cap 200 chars (the store re-asserts as last line of defense).
+   8. Candidate mapping (every §7.3 field, explicit):
+      `key` (step 1) · `surface`/`surfaces` (step 2) · `kind` (step 2) ·
+      `score` = merged score rounded half-up to 2 decimals (a number
+      satisfying `Number.isInteger(score*100)`) · `extractors` = contributing
+      extractor ids sorted in the fixed order [ja-domain, identifiers,
+      abbreviations, doc-definitions] · `occurrences` = deduped raw count ·
+      `sources` (step 7) · `suggestedDefinition`/`suggestedDefinitionSource`
+      (step 3).
    3′. `allKeys` = every key seen BEFORE exclusions/thresholds (drift input:
       24 compares curatedKeys against allKeys).
 3. MergeStats: `{groups, emitted, curatedHits, rejectedHits, belowThreshold,
@@ -68,7 +80,9 @@ frozen deterministic contract that goldens (28) protect.
 - [ ] Kind priority: group with E2+E4 raws ⇒ doc-defined; E1+E3 ⇒ domain.
 - [ ] Score: constructed case where two extractors contribute → +0.5 bonus asserted; rounding half-up verified (e.g. 3.715 → 3.72).
 - [ ] Surface tie-break and surfaces sorting asserted with JA variants (支払予約/支払い予約).
-- [ ] Definition priority: table-def beats とは-sentence when both exist for 締め処理-style case (construct raws in both orders — output identical due to internal sort).
+- [ ] Definition priority: a `table` E4 raw beats a `headingSection` raw for the same key regardless of input order (definitionKind priority; construct raws in both orders — identical output).
+- [ ] Snippet hygiene: an over-long/control-char snippet in a raw is sanitized in the emitted Candidate.
+- [ ] Evidence: selection by kind-priority, final sources sorted by (path, line) — asserted on a constructed multi-extractor group.
 - [ ] Exclusions/threshold/exemptions/cap each unit-tested; stats counts exact.
 - [ ] Shuffle-invariance property test (≥100 random permutations of a 20-raw corpus).
 

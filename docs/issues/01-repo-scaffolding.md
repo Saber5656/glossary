@@ -51,7 +51,8 @@ toolchain and directory layout fixed here. The package stays private in v1
    `src/store/`, `src/scan/`, `src/content/`, `src/tokenize/`, `src/extract/`,
    `src/export/`, `src/site/`, `src/site/client/`, `src/llm/`, `src/util/`.
    Also create empty dirs with `.gitkeep`: `fixtures/`, `assets/site/`,
-   `scripts/`, `examples/`, `test/e2e/`.
+   `scripts/`, `examples/`, `test/e2e/`. (`examples/pages.yml` itself is
+   issue 34's deliverable; this issue creates only the placeholder directory.)
 4. ESLint (flat config) with typescript-eslint recommended-type-checked;
    rules: `@typescript-eslint/no-explicit-any: error`,
    `@typescript-eslint/no-floating-promises: error`, `eqeqeq: error`.
@@ -62,18 +63,29 @@ toolchain and directory layout fixed here. The package stays private in v1
 7. `vitest.config.ts`: node environment, include `src/**/*.test.ts` and
    `test/**/*.test.ts`, coverage provider v8 (thresholds set later).
 8. README is NOT rewritten here (issue 39); leave as-is.
+9. `src/cli/main.ts` placeholder: prints exactly `glossary CLI placeholder`
+   to stdout and exits 0 — no argument parsing, no command handling (the real
+   CLI is issue 06).
+10. Supply-chain verifier `scripts/check-dep-scripts.mjs` (wired into
+   `npm run lint`): reads the production dependency tree
+   (`npm ls --omit=dev --all --json` or walking `node_modules` from
+   package-lock) and exits non-zero if ANY production dependency's
+   package.json declares `preinstall`, `install`, `postinstall`, or `prepare`.
+   This repo's own package.json must declare none of those lifecycle scripts.
 
 ## Acceptance Criteria
 
-- [ ] `npm ci && npm run typecheck && npm run lint && npm run test && npm run build` all exit 0 on Node 22 and 26.
-- [ ] `node dist/cli/main.js` executes (may print a placeholder line; real CLI in issue 06) — add a 3-line placeholder `src/cli/main.ts`.
-- [ ] `npm ls --omit=dev --all` shows only the allowlisted runtime packages and their transitive deps; no package with `postinstall`/`preinstall`/`install` scripts of its own appears in the direct dependency list (verify `npm query ":attr(scripts, [postinstall])"` returns none of our direct deps).
+- [ ] `npm ci && npm run typecheck && npm run lint && npm run test && npm run build` all exit 0 on Node 22, 24, and 26.
+- [ ] `node dist/cli/main.js` prints `glossary CLI placeholder` and exits 0.
+- [ ] Direct runtime dependencies in package.json are exactly the ADR-001 allowlist (name-for-name).
+- [ ] `node scripts/check-dep-scripts.mjs` exits 0 on the installed tree, and fails when pointed at a fixture tree containing a dep with a `postinstall` script (unit-test the verifier itself).
 - [ ] `package-lock.json` committed; LICENSE present; all skeleton dirs exist.
 
 ## Validation
 
-Run the command chain above on both Node versions (nvm/volta or CI in issue
-02). Paste outputs in the PR. `git status` clean after build (dist ignored).
+Run the command chain above on Node 22, 24, and 26 (nvm/volta locally; CI in
+issue 02). Paste outputs in the PR. `git status` clean after build (dist
+ignored).
 
 ## Dependencies
 

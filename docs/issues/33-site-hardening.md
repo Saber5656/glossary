@@ -22,9 +22,16 @@ CSP, or self-containment (abuse case AC1, boundary B3).
 
 ## Detailed Requirements
 
-1. Hostile scenario extension: on the `repo-hostile` copy — extract, approve
-   the XSS-bait keys (`<img…>用語` etc.) and the `javascript:`-link term via
-   CLI, then `build`. Assertions over `glossary/site/`:
+1. Hostile scenario extension: on the `repo-hostile` copy — extract, then
+   exact curation script:
+   `approve '<img src=x onerror=alert(1)>用語' --id xss-img`,
+   `approve '"><script>alert(2)</script>' --id xss-script`
+   (both exist as candidates from docs/xss.md; pass keys termKey-normalized).
+   Additionally seed one test-only curated term via the store API
+   (`writeTerm`): id `js-link-bait`, term `リンク用語`, definition containing
+   `[click](javascript:alert(3)) と https://evil.example` (the
+   `javascript:`-link case cannot arrive via extraction). Then `build`.
+   Assertions over `glossary/site/`:
    - No file contains the raw substrings `<img src=x onerror` or
      `<script>alert` outside HTML-escaped form (`&lt;img`, `&lt;script`).
    - No `href` or `src` attribute value in any built HTML starts with
@@ -34,14 +41,22 @@ CSP, or self-containment (abuse case AC1, boundary B3).
    - jsdom load of index.html + injected app behavior: search for the bait
      term; result list contains no `img`/`script` elements (AC1 in the
      client path, complementing 32's unit test with the REAL built bundle).
-2. Whole-site scanner `site-scan.ts` (reused by CI for any built site):
-   - Every `.html` file: exactly one CSP meta matching the DESIGN §11.2 string;
-     `<html lang=` present; no inline `<script>` bodies (only `src=` module
-     tag on index); no `style=` attributes; no event-handler attributes
-     (`on*=` lexical check).
+2. Whole-site scanner — exported API + npm script (issue 41 reuses both):
+   `scanSite(dir: string): {violations: {file: string, rule: string, detail: string}[]}`
+   (pure — returns diagnostics, never throws on violations) and
+   `npm run scan:site -- <dir>` exiting 1 when violations exist, printing
+   one line per violation. Rules:
+   - Every `.html` file: exactly one CSP meta matching the DESIGN §11.2
+     string; `<html lang=` present; no inline `<script>` bodies (only the
+     `src=` module tag on index); **no `<style>` elements**; no `style=`
+     attributes; no event-handler attributes (`on*=` lexical check).
+   - Every parsed `href`/`src` value must be RELATIVE: no scheme of any kind
+     (`javascript:`, `data:`, `mailto:`, `ftp:` …), no protocol-relative
+     `//`, no root-absolute `/` prefix. (No data-URL exception — the site
+     uses none.)
    - Whole tree: zero occurrences of `http://` or `https://` in ANY file
-     (HTML/JS/CSS/JSON) — the license banner in app.js must therefore avoid
-     URLs (32 respects this; assert).
+     (HTML/JS/CSS/JSON) — the banner in app.js must avoid URLs (32
+     respects this; assert).
    - All referenced relative assets exist (parse href/src, resolve, stat).
 3. Run the same scanner over the `repo-ja-mixed` built site (clean content
    must also pass — guards against scanner false positives).
@@ -50,19 +65,22 @@ CSP, or self-containment (abuse case AC1, boundary B3).
 ## Acceptance Criteria
 
 - [ ] Hostile site assertions all green with the real built site.
-- [ ] Scanner catches seeded violations (self-test: feed it a deliberately bad HTML string fixture and assert each rule fires).
+- [ ] Scanner catches seeded violations (self-test: bad-HTML fixtures assert EVERY rule fires at least once — incl. `<style>` element, `//cdn` protocol-relative, root-absolute `/x`, `mailto:` and `data:` hrefs).
+- [ ] `npm run scan:site -- <dir>` exits 1 on a violating tree, 0 on the clean fixture site.
 - [ ] ja-mixed site passes the scanner (no false positives).
 - [ ] jsdom real-bundle search test green.
 - [ ] CI includes the suite on all matrix nodes.
 
 ## Validation
 
-CI run link; local `open` of the hostile site + manual click-through documented
-with a screenshot in the PR (visual confirmation nothing executes).
+CI run link; serve the hostile site locally
+(`python3 -m http.server -d <outDir>`, NOT file://) and click through the
+bait pages once — note observations in the PR (visual confirmation nothing
+executes; non-blocking aid, the tests are the gate).
 
 ## Dependencies
 
-13, 31, 32 (and 28's harness).
+13, 28 (harness), 31, 32.
 
 ## Non-goals
 

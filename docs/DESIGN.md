@@ -209,7 +209,7 @@ All tool-managed files live under one directory, default `glossary/` (override:
 | Path | Owner | Written by | Committed? |
 |---|---|---|---|
 | `glossary/config.yaml` | human | `init` (then hand-edited) | yes |
-| `glossary/candidates.yaml` | **machine** | `extract` (wholesale rewrite), `draft` (fills suggested definitions) | yes (reviewable diffs) |
+| `glossary/candidates.yaml` | **machine** | `extract` (wholesale rewrite), `draft` (fills suggested definitions), `approve`/`reject` (entry removal only) | yes (reviewable diffs) |
 | `glossary/rejected.yaml` | human via CLI | `reject` / `reject --remove` | yes |
 | `glossary/terms/<id>.yaml` | **human** | `approve` (creation), `draft --curated` (definition fill, explicit), hand edits | yes |
 | `glossary/stopwords.txt` | human | optional, referenced from config | yes |
@@ -237,7 +237,8 @@ rejected list, and duplicate detection. It MUST be implemented once
 
 1. Unicode NFKC normalize.
 2. Trim; collapse internal whitespace runs to a single ASCII space.
-3. Lowercase Latin letters (Japanese untouched).
+3. Lowercase via Unicode `toLowerCase()` (locale-independent; Japanese
+   untouched — other cased scripts also lower, which is the frozen contract).
 4. Strip surrounding brackets/quotes: `「」『』()（）"'` (one balanced layer).
 
 `termKey(surface)`:
@@ -266,7 +267,7 @@ include:            # glob allowlist, relative to repo root
 exclude: []         # user globs; ALWAYS additionally applied: .gitignore + built-in denylist (§9.1)
 scan:
   maxFileSizeKB: 512        # larger files skipped with a warning
-  followSymlinks: false     # v1: not configurable-true; reserved
+  followSymlinks: false     # must be false; `true` is a validation error in v1 (reserved for v2)
 extract:
   minOccurrences: 2         # global floor
   extractors:
@@ -279,7 +280,7 @@ extract:
 export:
   path: GLOSSARY.md
 site:
-  outDir: glossary/site
+  outDir: glossary/site      # init renders this as <dir>/site under a non-default --dir
   title: "Team Glossary"
   locale: ja                # ja | en (UI strings)
   baseUrl: "/"              # path prefix when hosted under a subpath
@@ -314,7 +315,7 @@ candidates:
     occurrences: 17
     sources:                           # top ≤5 evidence locations, sorted (path, line)
       - { path: docs/billing.md, line: 12, snippet: "支払予約を作成する" }
-    suggestedDefinition: null          # string | null (from E4 doc-definitions or LLM draft)
+    suggestedDefinition: null          # string | null (from E4 doc-definitions, an E3 expansion, or LLM draft)
     suggestedDefinitionSource: null    # doc | llm | null
 ```
 
@@ -384,7 +385,9 @@ Invariants (checked by `validate`):
 - V2: curated ids unique; alias keys unique across all curated terms.
 - V3: every `relatedTerms` id exists.
 - V4: machine files parse against their schema and schemaVersion == 1.
-- V5 (warning): curated definition empty; definitionSource == llm; drift terms.
+- V5 (warning): curated definition empty; definitionSource == llm. (Drift —
+  curated terms no longer found in the repo — is computed and reported by
+  `extract` (§10.2), not by validate.)
 
 `approve`/`reject` on a key not currently in candidates fails with exit 2 and a
 hint (unless `reject --force` to pre-emptively block a key).
@@ -397,11 +400,15 @@ returns data + warnings. No stage mutates stores except the final write.
 ### 9.1 Scanner (`src/scan`)
 
 - Enumerate files under repo root matching `include` minus `exclude`.
+- Dot-directories and dotfiles are NOT scanned in v1 (fast-glob `dot: false`);
+  `.gitignore` files are still read for ignore semantics.
 - Always excluded (built-in denylist, applied before user config):
   `.git/**`, `node_modules/**`, `dist/**`, `build/**`, `vendor/**`,
-  `*.min.*`, lockfiles, `glossary/<managed files>` (self), binary extensions
-  (images/fonts/archives/media), and everything matched by `.gitignore`
-  (root + nested, via `ignore` package semantics).
+  `*.min.*`, lockfiles, the CONFIGURED tool directory (`--dir`, whatever its
+  value) and the configured generated outputs (`config.export.path`,
+  `config.site.outDir`) — the tool must never scan its own artifacts — plus
+  binary extensions (images/fonts/archives/media), and everything matched by
+  `.gitignore` (root + nested, via `ignore` package semantics).
 - Guards: skip files > `scan.maxFileSizeKB`; skip files containing NUL in the
   first 8 KiB (binary sniff); never follow symlinks; resolve paths and require
   `repoRoot` prefix (traversal guard).
@@ -435,8 +442,11 @@ returns data + warnings. No stage mutates stores except the final write.
 ### 9.4 Extractors
 
 Each extractor returns `RawCandidate {surface, kind, score, source:{path,line},
-snippet?}` lists. Details, formulas, and worked examples live in the
-corresponding issue file; summary:
+snippet?, expansion?, definition?, definitionKind?}` lists — `expansion` is
+E3-only (the paired full form); `definition`/`definitionKind` are E4-only
+(definitionKind priority: definitionList > table > boldLead > jaSentence >
+enSentence > headingSection). Details, formulas, and worked examples live in
+the corresponding issue file; summary:
 
 - **E1 `ja-domain`** — from doc text blocks: POS-tag, build maximal compound
   runs of nouns/prefix/suffix (名詞連続), plus heuristic candidates (katakana
@@ -479,9 +489,14 @@ corresponding issue file; summary:
    `extract.minOccurrences` (E4 exempt — a single explicit definition wins);
    per-extractor thresholds already applied inside extractors.
 6. Keep top `extract.maxCandidates` by (score desc, key asc); record evidence
-   (≤ 5 sources, deterministic pick: highest-score extractor first, then
-   path/line sort).
-7. suggestedDefinition: E4's definition if present (first by source order).
+   (≤ 5 sources — deterministic pick: raws ordered by kind-priority extractor
+   first, then (path, line); dedupe (path, line); the final emitted `sources`
+   array is then re-sorted by (path, line) per §7.3).
+7. suggestedDefinition: the E4 definition with the highest definitionKind
+   priority (tie → path, line ascending); else, if any E3 raw carries
+   `expansion`, format it per `llm.definitionLanguage`
+   (`"<expansion> の略。"` / `"Abbreviation of <expansion>."`); source is
+   `doc` in both cases; else null.
 
 Output feeds §7.3. The **drift report** compares curated terms' keys against
 the full pre-drop key set and lists curated terms with zero occurrences.
@@ -496,18 +511,22 @@ Exit codes: `0` success · `1` runtime error · `2` usage error (bad args/state)
 · `3` validation findings (validate) / consent missing (draft).
 
 stdout carries command output (human table or `--json`); stderr carries logs
-and warnings. `--json` output shapes are frozen in each command's issue file.
+and warnings. With `--json`, every command prints a single-line envelope
+`{"ok": boolean, "command": string, "data": <command-specific>, "warnings": string[]}`
+(on error: `{"ok": false, "command", "error": {"code", "message"}}`); the
+per-command `--json` shapes shown in this section and frozen in each command's
+issue file are the **`data` field** of that envelope.
 
 | # | Command | Effect | Notes |
 |---|---|---|---|
 | 10.1 | `init` | create `glossary/` dir, config.yaml, .gitignore, empty rejected.yaml, terms/ | idempotent; `--force` to overwrite config |
-| 10.2 | `extract` | full pipeline §9 → rewrite candidates.yaml; print summary + drift report | `--json`: {counts, drift, warnings} |
+| 10.2 | `extract` | full pipeline §9 → rewrite candidates.yaml; print summary + drift report | `--json` data: counts/skipped/drift/tokenizer (envelope carries warnings) |
 | 10.3 | `list` | list entries | `--status candidate\|curated\|rejected` (default candidate), `--kind`, `--limit N` (default 50) |
-| 10.4 | `show <key-or-id>` | full record incl. evidence snippets | resolves candidates first, then curated id/term/alias |
+| 10.4 | `show <key-or-id>` | full record incl. evidence snippets | resolution order: candidate key → curated id → curated term/alias key → rejected key |
 | 10.5 | `status` | counts per state, pending-definition count, last extract timestamp | |
 | 10.6 | `approve <key...>` | T2 transition | `--id <slug>` (single key only), `--tag <tag>` repeatable |
 | 10.7 | `reject <key...>` | T3 | `--reason <text>`; `--remove` for T5; `--force` allows unknown keys |
-| 10.8 | `validate` | run V1–V5 (§8) over all stores + config | errors ⇒ exit 3; `--json` findings list |
+| 10.8 | `validate` | run V1–V5 (§8) over all stores + config | errors ⇒ exit 3; `--strict` treats warnings as errors; `--json` findings list |
 | 10.9 | `export` | render GLOSSARY.md from curated terms | deterministic ordering: sortKey = reading ?? term, NFKC, code-point sort; groups by kind; Markdown special chars escaped |
 | 10.10 | `build` | generate static site §11 into site.outDir | `--out <dir>` override; refuses non-managed non-empty dir without `--force` |
 | 10.11 | `draft [keys...]` | LLM drafting §12 | `--curated <id...>` for curated empty definitions; `--all-pending`; `--dry-run` prints exact payloads and sends nothing |
@@ -683,13 +702,13 @@ Anything beyond these lists requires updating ADR-001 §deps.
 | Layer | What | Where |
 |---|---|---|
 | Unit | normalize/termKey; identifier splitting; each extractor's rules incl. edge cases; redaction patterns; yaml limits; template escaping | `src/**/*.test.ts` |
-| Golden e2e | run built CLI on `fixtures/repo-ja-mixed`: extract → approve scripted set → export + build; byte-compare candidates.yaml, GLOSSARY.md, and selected site files against committed goldens | `test/e2e/` |
+| Golden e2e | run built CLI on `fixtures/repo-ja-mixed`: extract → approve scripted set → export (issue 28 byte-compares candidates.yaml + GLOSSARY.md); site build goldens/scans are issue 33's layer | `test/e2e/` |
 | Determinism | run extract twice, assert byte-identical output | e2e |
 | Hostile | run full pipeline on `fixtures/repo-hostile`; assert AC1–AC4 outcomes; assert built site contains no unescaped payload and no external URLs | e2e |
-| LLM | undici MockAgent server; dry-run golden payloads; schema-retry path; consent-gate refusals; key-never-logged assertion | `test/llm/` |
+| LLM | unit level: undici MockAgent (issue 35, `test/llm/`); CLI e2e level: local loopback `node:http` mock server — a spawned CLI process cannot be intercepted by MockAgent (issue 38, `test/e2e/`); dry-run golden payloads; schema-retry path; consent-gate refusals; key-never-logged assertion | `test/llm/`, `test/e2e/` |
 | CI | lint, typecheck, unit+e2e on Node 22/24/26 × ubuntu, macos; windows job `continue-on-error: true` (U3) | `.github/workflows/ci.yml` |
-| Manual (owner) | protocol in `docs/validation/manual-protocol.md`: run on the owner's real team repo, record precision notes → feeds U2 | issue 38 |
-| Smoke | `scripts/smoke.sh <git-url>`: clone shallow, init+extract+build, report counts; run against 2–3 public JA-doc OSS repos locally (not CI) | issue 37 |
+| Manual (owner) | protocol in `docs/validation/manual-protocol.md`: run on the owner's real team repo, record precision notes → feeds U2 | issue 42 |
+| Smoke | `scripts/smoke.sh <git-url>`: clone shallow, init+extract+build, report counts; run against 2–3 public JA-doc OSS repos locally (not CI) | issue 41 |
 
 Acceptance for v1 overall: all ISSUE_PLAN issues closed, CI green, hostile
 fixtures pass, manual protocol executed once with owner sign-off.
@@ -713,4 +732,4 @@ W5 site → W6 LLM → W7 docs/validation/release-readiness.
 
 Once wave 4 lands, this repository itself runs `glossary` (config committed,
 GLOSSARY.md exported) so every later wave is exercised on real content
-(issue 38 includes it).
+(issue 42 includes it).

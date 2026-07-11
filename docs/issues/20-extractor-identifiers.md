@@ -22,8 +22,10 @@ Identifier terms anchor the glossary to the codebase (R1). The signal is
 ## Detailed Requirements
 
 1. Signature:
-   `extractIdentifiers(inputs: {identifiers: DeclaredIdent[], fileTexts: Map<relPath, string>}, cfg: {minOccurrences, stopwords: Set<string>}): RawCandidate[]`
-   where DeclaredIdent comes from issue 16 (`{name, line, path, declKind, exported}`).
+   `extractIdentifiers(inputs: {identifiers: DeclaredIdent[], fileTexts: Map<string, string>}, cfg: {minOccurrences: number, stopwords: Set<string>}): RawCandidate[]`
+   — `DeclaredIdent` is issue 16's exported type (already carries `path`);
+   `fileTexts` maps relPath → full text of every scanned CODE file (the
+   pipeline, issue 24, provides it).
 2. Candidate set: declarations with `exported === true`, name length ≥ 4,
    split tokens ≥ 2 OR declKind ∈ {class, interface, type, enum} (single-word
    class names like `Logger` allowed but face the stoplist).
@@ -32,9 +34,11 @@ Identifier terms anchor the glossary to the codebase (R1). The signal is
    `surfaces`; emit RawCandidate.surface = phrase; put raw name into snippet
    context: snippet = declaration line text).
 4. Occurrence counting: count REFERENCES of the raw identifier across all
-   scanned code files: word-boundary literal search
-   (`new RegExp('\\b'+escapeRegExp(name)+'\\b','g')`) over `fileTexts`
-   (code files only, comments included). Definition line counts once.
+   scanned code files. Scan PER LINE, each line capped at 2000 chars first
+   (B2'), with identifier-boundary matching:
+   `new RegExp('(^|[^A-Za-z0-9_$])' + escapeRegExp(name) + '(?=$|[^A-Za-z0-9_$])', 'g')`
+   — `\b` is wrong for names with `$`. Comments included; the declaration
+   line counts once.
 5. Filters:
    - occurrences (references) < cfg.minOccurrences (default 3, §7.2) ⇒ drop.
    - test-file declarations dropped: path matches
@@ -48,6 +52,9 @@ Identifier terms anchor the glossary to the codebase (R1). The signal is
      server, request, response, result, results, test, mock, temp, tmp, node,
      app, application, default, new, old, name, id, key, string, number, …).
    - Digit-only tokens removed from phrase; if nothing remains, drop.
+   - One-letter parts (§9.4-E2): drop any candidate whose phrase contains a
+     single-letter alphabetic token after splitting (`XPayment` → [x,
+     payment] ⇒ dropped).
 6. Score: `distinctFiles * ln(1 + references)` rounded to 2 decimals, where
    distinctFiles = number of files containing a reference.
 7. Emit one RawCandidate (kind `code`) per DECLARATION site (path/line of the
@@ -60,12 +67,15 @@ Identifier terms anchor the glossary to the codebase (R1). The signal is
 - [ ] repo-ja-mixed: emits `payment reservation` (class, ≥3 refs), `credit limit`, `reserve payment`, `auth timeout ms`, `create payment reservation` (python); does NOT emit `format date`/`logger` (stoplist/threshold per fixture design).
 - [ ] Reference counting: crafted fixture — identifier referenced in 3 files ⇒ distinctFiles=3 asserted in score.
 - [ ] Test-file declaration excluded (add `src/x.test.ts` decl in test fixture inline).
-- [ ] escapeRegExp fuzz: identifier `a$b` counts literally without regex error.
+- [ ] Boundary matching: `$foo`, `foo$`, `a$b` counted literally at line starts/ends and mid-line; `PaymentReservationX` does NOT count as a reference of `PaymentReservation`.
+- [ ] One-letter-part rule: `XPayment`-style declaration dropped.
+- [ ] Adversarial: a 5000-char single-line file is capped before matching; counting completes < 100 ms.
 - [ ] Determinism double-run.
 
 ## Validation
 
-Unit tests + fixture top-10 table in PR.
+Unit tests incl. a committed vitest snapshot of the fixture top-10 (sorted
+score desc, key asc).
 
 ## Dependencies
 

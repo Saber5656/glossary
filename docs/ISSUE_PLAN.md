@@ -91,28 +91,28 @@ implied. "13*" = fixtures are a test-time dependency.
 | 18 | 01, 03, 08 |
 | 19 | 15, 17, 08, 13* |
 | 20 | 16, 18, 08, 13* |
-| 21 | 15, 16, 08, 13* |
+| 21 | 08, 15, 16, 18, 13* |
 | 22 | 15, 08, 13* |
 | 23 | 08, 09, 10, 11, 19, 20, 21, 22 |
 | 24 | 06, 14, 15, 16, 23 |
 | 25 | 06, 09, 10, 11 |
 | 26 | 06, 09, 10, 11 |
 | 27 | 06, 09 |
-| 28 | 13, 24, 26, 27 |
-| 29 | 01, 08 |
+| 28 | 12, 13, 24, 26, 27 |
+| 29 | 01, 08, 18 |
 | 30 | 06, 09, 29 |
 | 31 | 30 |
-| 32 | 29, 30 |
-| 33 | 13, 31, 32 |
-| 34 | 31 |
+| 32 | 29, 30, 31 |
+| 33 | 13, 28, 31, 32 |
+| 34 | 02, 31 |
 | 35 | 03, 05 |
-| 36 | 03, 05, 10 |
+| 36 | 03, 05, 10, 13* |
 | 37 | 06, 09, 10, 35, 36 |
-| 38 | 13, 37 |
-| 39 | 24, 26, 27, 30 (behavioral accuracy) |
+| 38 | 13, 28, 33, 37 |
+| 39 | 02, 07, 12, 24, 25, 26, 27, 30, 34, 37, 40 (documented behavior must exist) |
 | 40 | 01 |
-| 41 | 24, 30 |
-| 42 | 28, 33, 38 |
+| 41 | 24, 30, 33 |
+| 42 | 28, 33, 38, 39, 40, 41 (final gate runs on finished docs/UX) |
 
 ## 4. Implementation waves
 
@@ -134,6 +134,7 @@ Within a wave, issues sharing no dependency edge may proceed in parallel
 
 | DESIGN.md section | Covered by |
 |---|---|
+| §4 design principles | determinism → 03 (clock), 23 (shuffle-invariance), 28 (byte goldens), 30/31 (site determinism); untrusted-input posture → 13, 33, 38; dependency-ADR discipline → 01 |
 | §5 product repo layout | 01 |
 | §6 target-repo layout & ownership rules | 04, 07, 24 (write discipline), 26 |
 | §7.1 normalization/identity | 08 |
@@ -154,7 +155,7 @@ Within a wave, issues sharing no dependency edge may proceed in parallel
 | §13 B2/B2' | 04, 12, 19–22 (regex discipline), 03 |
 | §13 B3 | 31, 32, 33 |
 | §13 B4 | 35, 36, 37, 38 |
-| §13 B5 | 01, 02 |
+| §13 B5 | 01 (lockfile, no lifecycle scripts, runtime-dep allowlist + verifier), 02 (npm ci, SHA-pinned actions, Dependabot) |
 | §13 B6 | 02, 34 |
 | §14 errors/logging | 03, 06 |
 | §15 dependency allowlist | 01 |

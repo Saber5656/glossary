@@ -37,28 +37,45 @@ enough for daily use.
    9. `writeCandidates` (10) with tool version + clock.
    10. Drift: `curatedKeys − allKeys` (term key or ANY alias key found ⇒ not
        drifted) → list of `{id, term}`.
-2. Human output (stdout), exactly this shape:
+2. Command contract: `glossary extract` accepts NO positional args; honors
+   the global flags (`--dir`, `--repo`, `--json`, `--verbose`, `--no-color`);
+   usage/config errors exit 2; under `--json`, stdout carries ONLY the JSON
+   envelope — logs/warnings go to stderr (issue 06 conventions).
+   Store discipline (B2): curated/rejected are read ONLY via the issue-09/11
+   store APIs, candidates written ONLY via issue-10 `writeCandidates`; no
+   direct YAML parse/serialize anywhere in this command.
+3. Human output (stdout), exactly this shape:
    ```
-   scanned 123 files (4 skipped: 2 size, 1 binary, 1 ignored)
+   scanned 123 files (5 skipped: 2 size, 1 binary, 1 ignored, 1 symlink)
    extractors: ja-domain 45, identifiers 23, abbreviations 8, doc-definitions 6
    candidates: 61 written (12 below threshold, 3 curated, 2 rejected, 0 capped)
    drift: 1 curated term no longer found: 旧用語 (t-a1b2c3d4)
    ```
-   (drift section omitted when empty; counts from ScanResult + MergeStats.)
-3. `--json` data (frozen):
+   (drift section omitted when empty; zero-count skip reasons omitted;
+   counts from ScanResult + MergeStats.)
+4. `--json` data (frozen; the envelope's `data` field — the envelope itself
+   carries `warnings` = logger.warnings()):
    ```json
-   {"scanned": n, "skipped": {"size": n, "binary": n, "ignored": n, "escape": n},
+   {"scanned": n,
+    "skipped": {"size": n, "binary": n, "ignored": n, "escape": n, "symlink": n, "unreadable": n},
     "extractorCounts": {"ja-domain": n, "identifiers": n, "abbreviations": n, "doc-definitions": n},
     "written": n, "dropped": {"belowThreshold": n, "curated": n, "rejected": n, "capped": n},
     "drift": [{"id": "...", "term": "..."}],
     "tokenizer": "kuromoji" | "heuristics-only"}
    ```
-4. Failure behavior: single unreadable file (EACCES etc.) ⇒ warn + skip
-   (reason `unreadable`), never abort the run; store write errors abort with
-   exit 1.
-5. Performance budget: repo-ja-mixed extract < 5 s cold (incl. tokenizer dict
-   load) on CI; log dict-load ms at debug level.
-6. `extract` writes ONLY candidates.yaml (ownership contract §6) — add an
+   ("ignored" aggregates the scanner's denylist/gitignore/exclude reasons.)
+5. Drift (deterministic): computed from the FULL pre-drop key set (23's
+   `allKeys`); a curated term drifts iff NEITHER its term key NOR any alias
+   key is in allKeys; one entry per curated term, sorted by id
+   (compareCodepoint).
+6. Failure behavior: single unreadable file (EACCES etc.) ⇒ warning +
+   SkipRecord reason `unreadable`, never aborts the run; store write errors
+   abort with exit 1. Tokenizer fallback (17) emits its warning — visible in
+   the envelope warnings.
+7. Performance: the e2e test asserts repo-ja-mixed cold extract completes
+   < 10 s (hard, CI-safe) and logs the measured duration; the 5 s target is
+   informational. Dict-load ms logged at debug level.
+8. `extract` writes ONLY candidates.yaml (ownership contract §6) — add an
    fs-spy test asserting no other write paths.
 
 ## Acceptance Criteria
@@ -67,13 +84,15 @@ enough for daily use.
 - [ ] Re-run without changes ⇒ candidates.yaml byte-identical except NOTHING (generatedAt uses injected clock in test ⇒ fully identical).
 - [ ] Approve one term (via store call), re-extract ⇒ key excluded, drift empty; delete its source lines from fixture copy, re-extract ⇒ drift lists it.
 - [ ] Reject a key ⇒ excluded on next run.
-- [ ] `--json` snapshot matches frozen shape; human output matches template (regex-based assertions).
+- [ ] `--json` snapshot matches frozen shape incl. `symlink`/`unreadable` buckets; human output matches template (regex-based assertions).
+- [ ] Warnings: tokenizer-fallback run (bogus dict via seam) and an unreadable file both surface stable warning strings in the envelope `warnings`.
 - [ ] Disabled extractor (config) produces zero of that kind and its count key = 0.
+- [ ] Perf: e2e asserts < 10 s hard bound and logs duration.
 - [ ] fs-spy: only candidates.yaml written.
 
 ## Validation
 
-Integration suite green; perf number printed in CI log linked in PR.
+Integration suite green (perf bound is an automated assertion inside it).
 
 ## Dependencies
 
